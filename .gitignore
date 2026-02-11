@@ -1,0 +1,33 @@
+# Rust / Cargo
+debug/
+target/
+**/*.rs.bk
+*.pdb
+**/mutants.out*/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+xcuserdata/
+DerivedData/
+*.xcworkspace
+*.xcodeproj
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Claude Code
+.claude/settings.local.json
+
+# oh-my-claudecode
+.omc/
