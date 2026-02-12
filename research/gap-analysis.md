@@ -35,6 +35,27 @@ related:
 
 ## 업데이트 이력
 
+### 4차 업데이트 (2026-02-12) — 터미널 프로젝트 구조 조사
+
+> 5대 터미널 에뮬레이터(Alacritty, WezTerm, Rio, Ghostty, Zed Terminal) 프로젝트 구조 조사 완료.
+> 성능 최적화 패턴(이벤트 배칭, 셀 배칭, Damage Tracking, 텍스트 런 캐싱) 발견.
+>
+> **새 문서 → 해소된 갭:**
+>
+> | 새 문서 | 해소된 갭 |
+> |---------|-----------|
+> | `competitive/terminal-structures.md` | GAP 8.4 부분 해소 (프로세스 종료 — Alacritty Drop impl 패턴) |
+>
+> **새로 발견된 최적화 갭:**
+>
+> | 신규 갭 | 설명 | 우선순위 |
+> |---------|------|----------|
+> | GAP 9.1 | 이벤트 배칭 (60fps 폴링 → 4ms/100개 배칭 전환) | Critical |
+> | GAP 9.2 | 셀 배칭 (BatchedTextRun 최적화) | Important |
+> | GAP 9.3 | Damage Tracking (3단계 시스템 도입) | Important |
+> | GAP 9.4 | 텍스트 런 캐싱 (LRU 기반 셰이핑 캐시) | Nice-to-have |
+> | GAP 9.5 | 배경 영역 병합 (인접 동색 quad 병합) | Nice-to-have |
+
 ### 3차 업데이트 (2026-02-12) — 리서치 스프린트
 
 > 8개의 새로운 문서가 추가되어 다수의 기존 갭이 해소됨. 또한 현재 진행 중인 리서치 스프린트에서 추가 문서들이 작성되고 있음.
@@ -265,19 +286,59 @@ related:
 
 ---
 
+## 9. 성능 최적화 (신규 — 프로젝트 구조 조사 결과)
+
+### GAP 9.1: 이벤트 배칭 (Event Batching)
+- **현황**: 현재 60fps 타이머 폴링으로 PTY 출력 감지. Zed는 4ms 타임아웃 / 100개 이벤트 배칭 사용.
+- **영향**: Critical — CPU 사용량 감소, 반응성 향상
+- **Phase**: Phase 1
+- **필요 리서치 분량**: 소규모 (Zed 패턴 적용)
+- **참고**: `competitive/terminal-structures.md` §2.5
+
+### GAP 9.2: 셀 배칭 (Cell Batching — BatchedTextRun)
+- **현황**: 현재 셀별 TextRun 생성. Zed는 동일 스타일의 인접 셀을 하나의 BatchedTextRun으로 병합 (평균 ~10셀/배치).
+- **영향**: Important — TextRun 생성 및 paint call 대폭 감소
+- **Phase**: Phase 1
+- **필요 리서치 분량**: 소규모 (Zed 패턴 적용)
+- **참고**: `competitive/terminal-structures.md` §2.5
+
+### GAP 9.3: Damage Tracking (3단계 시스템)
+- **현황**: 현재 매 프레임 전체 리렌더. Ghostty는 3단계(false/partial/full), alacritty_terminal은 TermDamage 제공.
+- **영향**: Important — GPU 부하 최소화, 전력 소비 감소
+- **Phase**: Phase 1-2
+- **필요 리서치 분량**: 중규모
+- **참고**: `competitive/terminal-structures.md` §2.4
+
+### GAP 9.4: 텍스트 런 캐싱 (Text Run Caching)
+- **현황**: 현재 매번 텍스트 셰이핑 수행. Rio는 256-버킷 해시 + LRU 이빅션으로 96% 셰이핑 오버헤드 감소 달성.
+- **영향**: Nice-to-have — 반복 콘텐츠가 많은 경우 성능 향상
+- **Phase**: Phase 2+
+- **필요 리서치 분량**: 중규모
+- **참고**: `competitive/terminal-structures.md` §2.3
+
+### GAP 9.5: 배경 영역 병합 (Background Region Merging)
+- **현황**: 현재 셀별 독립 bg_quad 생성. Zed는 같은 색상의 인접 배경 사각형을 수평/수직으로 병합.
+- **영향**: Nice-to-have — 대형 단색 영역(예: 빈 화면, 상태바)의 draw call 감소
+- **Phase**: Phase 1-2
+- **필요 리서치 분량**: 소규모
+- **참고**: `competitive/terminal-structures.md` §2.5
+
+---
+
 ## 9. 진행 중인 리서치 (2026-02-12 스프린트)
 
 현재 리서치 스프린트에서 다음 주제들이 병렬로 작성되고 있다. 완료 시 추가 갭이 해소될 예정:
 
 | 주제 | 예상 문서 | 해소 예상 갭 |
 |------|-----------|-------------|
-| Graphics protocols (Kitty/iTerm2/Sixel) | `core/graphics-protocols.md` (가칭) | 그래픽스 프로토콜 구현 상세 |
-| GPUI widget integration | `gpui/widget-integration.md` (가칭) | DockArea/Tabs/ResizablePanel 통합 |
+| Graphics protocols (Kitty/iTerm2/Sixel) | `core/graphics-protocols.md` ✅ | 그래픽스 프로토콜 구현 상세 |
+| GPUI widget integration | `gpui/widgets-integration.md` ✅ | DockArea/Tabs/ResizablePanel 통합 |
 | Vim IME 자동 전환 | `platform/vim-ime-switching.md` ✅ | Phase 3 IME 전환 킬러 피처 |
-| tmux 호환성 매트릭스 | `core/tmux-compatibility.md` (가칭) | tmux 제어 모드, passthrough |
-| Ghostty 아키텍처 패턴 | `core/ghostty-architecture.md` (가칭) | 최신 터미널 설계 참조 |
-| Warp 대체 분석 | `core/warp-analysis.md` (가칭) | AI 터미널 경쟁 분석 |
-| Kitty keyboard protocol 상세 | `core/keymapping.md` 보완 | Progressive enhancement 구현 |
+| tmux 호환성 매트릭스 | `core/tmux-compatibility.md` ✅ | tmux 제어 모드, passthrough |
+| Ghostty 아키텍처 패턴 | `competitive/ghostty-warp-analysis.md` ✅ | 최신 터미널 설계 참조 |
+| Warp 대체 분석 | `competitive/ghostty-warp-analysis.md` ✅ | AI 터미널 경쟁 분석 |
+| Kitty keyboard protocol 상세 | `core/keymapping.md` ✅ | Progressive enhancement 구현 |
+| 5대 터미널 프로젝트 구조 비교 | `competitive/terminal-structures.md` ✅ | 아키텍처 패턴, 최적화 기법, 크레이트 전략 |
 
 ---
 
@@ -300,9 +361,10 @@ related:
 | ~~7.1~~ | ~~claude-code 코드 변경~~ | ~~5~~ | ✅ 해소 | — |
 | ~~8.3~~ | ~~키입력→이스케이프~~ | ~~1~~ | ✅ 해소 | — |
 | 8.1 | macOS 앱 번들 | 5 | 미해소 | 중규모 |
-| 8.4 | 프로세스 종료/정리 | 1 | 미해소 | 소규모 |
+| ~~8.4~~ | ~~프로세스 종료/정리~~ | ~~1~~ | ✅ 부분 해소 | — |
+| 9.1 | 이벤트 배칭 | 1 | 미해소 | 소규모 |
 
-**Critical 미해소: 3개** (2.4 Alternate Screen, 8.1 앱 번들, 8.4 프로세스 종료)
+**Critical 미해소: 3개** (2.4 Alternate Screen, 8.1 앱 번들, 9.1 이벤트 배칭)
 
 ### Important (구현 품질에 영향)
 
@@ -323,8 +385,10 @@ related:
 | 7.3 | Claude Code PR 프로세스 | 5 | 미해소 | 소규모 |
 | 8.2 | Synchronized Output | 1~2 | 미해소 | 소규모 |
 | 8.5 | 셸 선택 로직 | 1 | 미해소 | 소규모 |
+| 9.2 | 셀 배칭 (BatchedTextRun) | 1 | 미해소 | 소규모 |
+| 9.3 | Damage Tracking | 1-2 | 미해소 | 중규모 |
 
-**Important 미해소: 10개**
+**Important 미해소: 12개**
 
 ### Nice-to-have
 
@@ -334,8 +398,10 @@ related:
 | ~~2.7~~ | ~~URL 감지 정규식~~ | ~~4~~ | ✅ 해소 | — |
 | ~~3.2~~ | ~~설정 Live Reload~~ | ~~5~~ | ✅ 해소 | — |
 | ~~4.4~~ | ~~성능 벤치마킹~~ | ~~1+~~ | ✅ 해소 | — |
+| 9.4 | 텍스트 런 캐싱 | 2+ | 미해소 | 중규모 |
+| 9.5 | 배경 영역 병합 | 1-2 | 미해소 | 소규모 |
 
-**Nice-to-have 미해소: 1개**
+**Nice-to-have 미해소: 3개**
 
 ---
 
@@ -343,12 +409,12 @@ related:
 
 | 카테고리 | 전체 | 해소 | 미해소 | 해소율 |
 |----------|------|------|--------|--------|
-| Critical | 14 | 11 | 3 | **79%** |
-| Important | 15 | 5 | 10 | **33%** |
-| Nice-to-have | 4 | 3 | 1 | **75%** |
-| **합계** | **33** | **19** | **14** | **58%** |
+| Critical | 15 | 11 | 4 | **73%** |
+| Important | 17 | 5 | 12 | **29%** |
+| Nice-to-have | 6 | 3 | 3 | **50%** |
+| **합계** | **38** | **19** | **19** | **50%** |
 
-Critical 갭의 79%가 해소되어 **Phase 1 착수에 필요한 핵심 리서치는 거의 완료**되었다. 미해소 Critical 갭 3개(Alternate Screen, 앱 번들, 프로세스 종료)는 모두 소~중규모로 빠르게 해소 가능하다.
+Critical 갭의 73%가 해소되어 **Phase 1 착수에 필요한 핵심 리서치는 거의 완료**되었다. 미해소 Critical 갭 4개(Alternate Screen, 앱 번들, 이벤트 배칭)는 모두 소~중규모로 빠르게 해소 가능하다.
 
 ---
 
@@ -359,24 +425,28 @@ Critical 갭의 79%가 해소되어 **Phase 1 착수에 필요한 핵심 리서�
 1. **GAP 2.4 해결**: `alacritty_terminal` API에서 alternate screen buffer 처리 방식 확인 — 소규모, 코드 확인으로 해소 가능
 2. **GAP 8.4 해결**: 프로세스 종료/정리 패턴 조사 — 소규모, Zed/Alacritty 참고
 3. **GAP 1.4 해결**: 최소 macOS SDK 버전 검증 — 소규모, 실제 빌드 테스트로 확인
+4. **GAP 9.1 해결**: 60fps 폴링을 이벤트 배칭으로 전환 — Zed 패턴 적용
 
 ### Phase 1 진행 중
 
-4. **GAP 3.3 해결**: 기본 키바인딩 전체 목록 정의 — iTerm2/Ghostty 참고
-5. **GAP 2.8 해결**: GPUI 커서 블링킹 구현 — Zed BlinkManager 참조
-6. **GAP 8.2 해결**: Synchronized Output 구현 — alacritty_terminal 지원 확인
-7. **GAP 8.5 해결**: 셸 선택 로직 구현 — Zed terminal 참고
+5. **GAP 3.3 해결**: 기본 키바인딩 전체 목록 정의 — iTerm2/Ghostty 참고
+6. **GAP 2.8 해결**: GPUI 커서 블링킹 구현 — Zed BlinkManager 참조
+7. **GAP 8.2 해결**: Synchronized Output 구현 — alacritty_terminal 지원 확인
+8. **GAP 8.5 해결**: 셸 선택 로직 구현 — Zed terminal 참고
+9. **GAP 9.2 해결**: BatchedTextRun 셀 배칭 구현 — element.rs TextRun 최적화
+10. **GAP 9.3 해결**: Damage Tracking 도입 — alacritty_terminal TermDamage 활용
+11. **GAP 9.5 해결**: 배경 영역 병합 — bg_quads 인접 병합 로직
 
 ### Phase 3 (IME)
 
-8. **GAP 4.2 해결**: IME 자동화 테스트 방법론 수립 — 대규모, 별도 리서치 필요
-9. **Vim IME 자동 전환 구현**: `platform/vim-ime-switching.md` 기반
+12. **GAP 4.2 해결**: IME 자동화 테스트 방법론 수립 — 대규모, 별도 리서치 필요
+13. **Vim IME 자동 전환 구현**: `platform/vim-ime-switching.md` 기반
 
 ### Phase 5 (배포)
 
-10. **GAP 8.1 해결**: macOS 앱 번들 구성 — `cargo bundle` 또는 수동 패키징
-11. **GAP 6.4/6.5 해결**: CI/CD + 릴리스 엔지니어링 — GitHub Actions 워크플로우
-12. **GAP 7.2/7.3 해결**: Claude Code PR 준비 — `integration/claude-code-strategy.md` 기반
+14. **GAP 8.1 해결**: macOS 앱 번들 구성 — `cargo bundle` 또는 수동 패키징
+15. **GAP 6.4/6.5 해결**: CI/CD + 릴리스 엔지니어링 — GitHub Actions 워크플로우
+16. **GAP 7.2/7.3 해결**: Claude Code PR 준비 — `integration/claude-code-strategy.md` 기반
 
 ### 진행 중인 리서치 스프린트 완료 시
 

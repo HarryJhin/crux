@@ -22,9 +22,13 @@ related:
 ### 1.1 크레이트 구조
 
 ```
-alacritty/              # GUI 애플리케이션 (윈도우, 렌더러, 입력)
-alacritty_terminal/     # 터미널 코어 라이브러리 (PTY, 그리드, 파서)
+alacritty/                  # GUI 애플리케이션 (윈도우, 렌더러, 입력)
+alacritty_terminal/         # 터미널 코어 라이브러리 (PTY, 그리드, 파서)
+alacritty_config/           # 설정 시스템 (TOML 파싱, 유효성 검사)
+alacritty_config_derive/    # 설정 매크로 (derive 프로시저)
 ```
+
+**총 4개 크레이트** (Edition 2024, MSRV 1.85.0)
 
 **핵심 설계**: 터미널 로직(`alacritty_terminal`)과 렌더링(`alacritty`)을 완전히 분리. `alacritty_terminal`은 독립 크레이트로 다른 프로젝트에서 재사용 가능하다(실제로 여러 프로젝트에서 의존성으로 사용).
 
@@ -572,9 +576,49 @@ Surface가 IME 위치(`IMEPos`)를 apprt에 전달하여 플랫폼별 IME 구현
 
 ---
 
-## 5. 비교 분석 및 Crux 적용 권장사항
+## 5. 프로젝트 구조 비교 (2026-02-12 보강)
 
-### 5.1 아키텍처 레이어 비교
+> 상세 분석: [competitive/terminal-structures.md](../competitive/terminal-structures.md)
+
+### 5.1 크레이트 수 비교
+
+| 프로젝트 | 크레이트 수 | 적정성 평가 |
+|----------|-----------|------------|
+| Zed Terminal | 2 | 최소 — 에디터 내장이므로 적합 |
+| Alacritty | 4 | 미니멀 — 독립 터미널의 하한 |
+| Crux | 6 | 적절 — 기능 확장 가능 여지 |
+| Rio | 8 | 적절 — 독립 렌더러(Sugarloaf) 포함 |
+| WezTerm | 55-60+ | 과다 — 유지보수 부담, 메인테이너 번아웃 |
+
+### 5.2 핵심 발견
+
+1. **Zed Terminal이 Crux의 직접적 레퍼런스**: 동일한 GPUI + alacritty_terminal 조합. Entity-View-Element 패턴, 이벤트 배칭(4ms/100개), Arc<FairMutex<>> 상태 공유 패턴 검증됨.
+
+2. **렌더링 최적화 3대 패턴**:
+   - **이벤트 배칭** (Zed): 4ms 타임아웃 또는 100개 이벤트 배치 처리
+   - **셀 배칭** (Zed): BatchedTextRun으로 동일 스타일 인접 셀 병합 (~10셀/배치)
+   - **배경 병합** (Zed): 같은 색상의 인접 배경 사각형 수평/수직 병합
+
+3. **Damage Tracking**:
+   - Ghostty: 3단계 (false/partial/full) — 가장 정교
+   - alacritty_terminal: TermDamage 내장 — Crux가 활용 가능
+   - Rio: Redux 스타일 상태 머신 — 변경 없는 행 스킵
+
+4. **텍스트 런 캐싱** (Rio 고유):
+   - 256-버킷 해시 테이블 + LRU 이빅션
+   - 반복 콘텐츠 셰이핑 오버헤드 96% 감소
+   - Crux Phase 2에서 도입 고려
+
+5. **IPC 프로토콜 패턴** (WezTerm):
+   - codec 크레이트: varbincode + zstd 압축
+   - 3가지 모드: in-process, 로컬 소켓, 원격 TLS
+   - Crux의 crux-ipc JSON-RPC 설계에 참고
+
+---
+
+## 6. 비교 분석 및 Crux 적용 권장사항
+
+### 6.1 아키텍처 레이어 비교
 
 | 레이어 | Alacritty | WezTerm | Rio | Ghostty |
 |--------|-----------|---------|-----|---------|
@@ -585,7 +629,7 @@ Surface가 IME 위치(`IMEPos`)를 apprt에 전달하여 플랫폼별 IME 구현
 | 멀티플렉싱 | 없음 (단일 창) | Mux (탭/분할/원격) | 탭 지원 | apprt 위임 |
 | IPC | 없음 | Unix Socket + PDU | 없음 | apprt IPC |
 
-### 5.2 PTY ↔ 렌더러 통신 패턴 비교
+### 6.2 PTY ↔ 렌더러 통신 패턴 비교
 
 | 프로젝트 | 패턴 | 공유 상태 | 장점 | 단점 |
 |----------|------|----------|------|------|
@@ -594,7 +638,7 @@ Surface가 IME 위치(`IMEPos`)를 apprt에 전달하여 플랫폼별 IME 구현
 | Rio | Event + Damage | EventLoopProxy | WGPU 최적화 | Alacritty 유사 |
 | Ghostty | Mailbox + Thread | State + Message | 3스레드 분리 | Zig 특화 |
 
-### 5.3 Crux 권장 아키텍처
+### 6.3 Crux 권장 아키텍처
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -639,7 +683,7 @@ Surface가 IME 위치(`IMEPos`)를 apprt에 전달하여 플랫폼별 IME 구현
 └──────────────────────────────────────────────────┘
 ```
 
-### 5.4 핵심 구현 권장사항
+### 6.4 핵심 구현 권장사항
 
 #### 1) 크레이트 구조 (Alacritty + WezTerm 하이브리드)
 ```
@@ -675,7 +719,7 @@ crux-cli/          # CLI 도구 (IPC 클라이언트)
 - Surface는 자신의 폰트, 크기, 설정을 소유
 - 앱 런타임(GPUI)은 Surface를 어디에 배치할지만 결정
 
-### 5.5 성능 최적화 우선순위
+### 6.5 성능 최적화 우선순위
 
 | 우선순위 | 최적화 | 출처 | 효과 |
 |----------|--------|------|------|
@@ -688,7 +732,7 @@ crux-cli/          # CLI 도구 (IPC 클라이언트)
 
 ---
 
-## 6. 의존성 크레이트 추천
+## 7. 의존성 크레이트 추천
 
 | 용도 | 크레이트 | 사용처 |
 |------|---------|--------|

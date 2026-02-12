@@ -591,6 +591,76 @@ Key metrics to watch:
 
 ---
 
+## 10. 프로젝트 구조 조사에서 발견된 최적화 패턴 (2026-02-12 보강)
+
+> 출처: [competitive/terminal-structures.md](../competitive/terminal-structures.md)
+
+### 10.1 이벤트 배칭 — Zed Terminal 패턴
+
+현재 Crux는 60fps 타이머 폴링(16ms 간격)으로 PTY 출력을 감지한다. Zed Terminal은 더 효율적인 이벤트 기반 배칭을 사용한다:
+
+```
+이벤트 루프:
+  1. 첫 이벤트 수신 → 4ms 타이머 시작
+  2. 추가 이벤트 누적 (최대 100개)
+  3. 4ms 경과 또는 100개 도달 → 일괄 처리
+  4. cx.notify() → GPUI 프레임 갱신
+```
+
+**이점**: 유휴 시 CPU 0%, 고속 출력 시 배칭으로 프레임 드랍 방지.
+
+**Crux 적용**: `view.rs`의 16ms 타이머를 이벤트 채널 기반 루프로 교체.
+
+### 10.2 셀 배칭 — BatchedTextRun
+
+현재 Crux의 `element.rs`는 셀별로 TextRun을 생성하고, 스타일이 같으면 마지막 TextRun의 `len`을 확장한다. Zed는 더 체계적인 BatchedTextRun 패턴을 사용:
+
+- 동일 스타일(폰트, 전경색, 배경색, 밑줄, 취소선)의 인접 셀을 하나의 구조체로 누적
+- 평균 ~10 셀/배치, paint call 비례 감소
+- 장식 문자(박스 드로잉, Powerline) 바이패스로 대비 조정 스킵
+
+**Crux 현황**: 이미 TextRun 확장 로직이 있으나, BatchedTextRun 구조체 기반으로 리팩터링하면 더 명확한 최적화 가능.
+
+### 10.3 배경 영역 병합
+
+현재 Crux의 `element.rs`는 기본 배경색과 다른 셀마다 독립 `bg_quad`를 생성한다. Zed는 같은 색상의 인접 배경을 병합한다:
+
+- **수평 병합**: 같은 행, 같은 색상, 인접한 셀 → 하나의 넓은 사각형
+- **수직 병합**: 같은 열, 같은 색상, 인접한 행 → 하나의 높은 사각형
+- 대형 단색 영역(빈 화면, 상태바)에서 draw call 대폭 감소
+
+### 10.4 3단계 Damage Tracking — Ghostty 패턴
+
+| 단계 | 조건 | 동작 |
+|------|------|------|
+| Level 0 (false) | 변경 없음 | 렌더링 완전 스킵 |
+| Level 1 (partial) | 일부 셀 변경 | 더티 행만 갱신 |
+| Level 2 (full) | 전체 변경 (리사이즈 등) | 풀 리드로우 |
+
+alacritty_terminal의 `TermDamage`를 활용하면 Crux에서도 Level 0/2를 즉시 구현 가능. Level 1 (행 단위 부분 갱신)은 GPUI의 canvas 모델과 조율 필요.
+
+### 10.5 텍스트 런 캐싱 — Rio 패턴
+
+Rio의 Sugarloaf 렌더러는 텍스트 셰이핑 결과를 캐싱한다:
+
+- 256-버킷 해시 테이블 (텍스트 내용 + 스타일을 키로 사용)
+- LRU 이빅션으로 메모리 제한
+- 반복 콘텐츠(프롬프트, 디렉토리 경로 등)의 셰이핑 오버헤드 96% 감소
+
+**Crux 적용**: Phase 2에서 도입 고려. 현재 GPUI의 `text_system.shape_line()`은 내부적으로 캐싱을 수행하므로, 실제 병목 측정 후 결정.
+
+### 10.6 최적화 도입 우선순위
+
+| 순위 | 기법 | 출처 | 기대 효과 | Phase |
+|------|------|------|----------|-------|
+| 1 | 이벤트 배칭 | Zed | CPU 유휴 시 0%, 반응성 ↑ | 1 |
+| 2 | 셀 배칭 리팩터링 | Zed | paint call 감소 | 1 |
+| 3 | 배경 병합 | Zed | draw call 감소 | 1 |
+| 4 | Damage Tracking (L0/L2) | Ghostty | 불필요 프레임 스킵 | 1-2 |
+| 5 | 텍스트 런 캐싱 | Rio | 셰이핑 오버헤드 감소 | 2+ |
+
+---
+
 ## Sources
 
 - [typometer](https://github.com/pavelfatin/typometer) — Visual keystroke latency measurement
