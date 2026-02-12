@@ -1,0 +1,273 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- macOS superellipse (squircle) -->
+    <clipPath id="mask">
+      <path d="M292.571 0C131.05 0 0 131.05 0 292.571v438.858C0 892.95 131.05 1024 292.571 1024h438.858C892.95 1024 1024 892.95 1024 731.429V292.571C1024 131.05 892.95 0 731.429 0z"/>
+    </clipPath>
+
+    <!-- === GRADIENTS === -->
+
+    <!-- Background -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#080912"/>
+      <stop offset="50%" stop-color="#0E0F20"/>
+      <stop offset="100%" stop-color="#13142A"/>
+    </linearGradient>
+
+    <!-- Nebula glow behind prompt -->
+    <radialGradient id="nebula" cx="510" cy="500" r="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1A1040" stop-opacity="0.35"/>
+      <stop offset="50%" stop-color="#120C30" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#080912" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Warm ambient behind prompt area -->
+    <radialGradient id="warmZone" cx="510" cy="500" r="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2A1520" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#080912" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Prompt chevron gradient -->
+    <linearGradient id="promptGrad" x1="300" y1="340" x2="540" y2="510" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F0D9B5"/>
+      <stop offset="100%" stop-color="#E8A87C"/>
+    </linearGradient>
+
+    <!-- Star glow at chevron tip -->
+    <radialGradient id="tipGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="20%" stop-color="#FFF0D8"/>
+      <stop offset="50%" stop-color="#E8A87C" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#D4774B" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- === MASKS === -->
+
+    <!-- Radial fade for cross rays (centered on chevron tip) -->
+    <radialGradient id="rayFadeGrad" cx="530" cy="500" r="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="white" stop-opacity="1"/>
+      <stop offset="30%" stop-color="white" stop-opacity="0.6"/>
+      <stop offset="60%" stop-color="white" stop-opacity="0.15"/>
+      <stop offset="85%" stop-color="white" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="rayMask">
+      <rect width="1024" height="1024" fill="url(#rayFadeGrad)"/>
+    </mask>
+
+    <!-- === FILTERS === -->
+
+    <!-- Wide ambient bloom -->
+    <filter id="wideGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+
+    <!-- Medium multi-pass glow -->
+    <filter id="medGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="b2"/>
+      <feMerge>
+        <feMergeNode in="b2"/>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Star glow at tip -->
+    <filter id="starGlow" x="-150%" y="-150%" width="400%" height="400%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="16" result="b2"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="32" result="b3"/>
+      <feMerge>
+        <feMergeNode in="b3"/>
+        <feMergeNode in="b2"/>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Prompt character glow -->
+    <filter id="promptGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="b2"/>
+      <feMerge>
+        <feMergeNode in="b2"/>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Cursor glow -->
+    <filter id="cursorGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="b2"/>
+      <feMerge>
+        <feMergeNode in="b2"/>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Diffraction spike glow -->
+    <filter id="spikeGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b2"/>
+      <feMerge>
+        <feMergeNode in="b2"/>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Soft star blur -->
+    <filter id="starBlur" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5"/>
+    </filter>
+
+    <!-- Cursor blink animation -->
+    <style>
+      @keyframes blink {
+        0%, 42% { opacity: 1; }
+        50%, 92% { opacity: 0.1; }
+      }
+      .cursor { animation: blink 1.2s ease-in-out infinite; }
+    </style>
+  </defs>
+
+  <g clip-path="url(#mask)">
+
+    <!-- ============================================ -->
+    <!-- BACKGROUND                                   -->
+    <!-- ============================================ -->
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <rect width="1024" height="1024" fill="url(#nebula)"/>
+    <rect width="1024" height="1024" fill="url(#warmZone)"/>
+
+    <!-- Distant scattered stars -->
+    <g opacity="0.28">
+      <circle cx="145" cy="105" r="1.4" fill="#FFFFFF"/>
+      <circle cx="290" cy="175" r="1" fill="#D0D0E8"/>
+      <circle cx="785" cy="140" r="1.3" fill="#FFFFFF"/>
+      <circle cx="875" cy="268" r="0.9" fill="#E0D8F0"/>
+      <circle cx="100" cy="348" r="1.2" fill="#FFFFFF"/>
+      <circle cx="900" cy="435" r="1" fill="#D0D0E8"/>
+      <circle cx="158" cy="540" r="1.3" fill="#FFFFFF"/>
+      <circle cx="855" cy="585" r="0.9" fill="#E0D8F0"/>
+      <circle cx="125" cy="715" r="1.2" fill="#FFFFFF"/>
+      <circle cx="790" cy="740" r="1" fill="#D0D0E8"/>
+      <circle cx="218" cy="878" r="1.1" fill="#FFFFFF"/>
+      <circle cx="835" cy="855" r="1.3" fill="#E0D8F0"/>
+      <circle cx="440" cy="75" r="1" fill="#FFFFFF"/>
+      <circle cx="615" cy="62" r="1.2" fill="#D0D0E8"/>
+      <circle cx="358" cy="935" r="1" fill="#FFFFFF"/>
+      <circle cx="685" cy="950" r="1.1" fill="#E0D8F0"/>
+      <circle cx="930" cy="155" r="0.8" fill="#FFFFFF"/>
+      <circle cx="72" cy="900" r="0.9" fill="#D0D0E8"/>
+      <circle cx="475" cy="65" r="1" fill="#FFFFFF"/>
+      <circle cx="75" cy="175" r="0.8" fill="#E0D8F0"/>
+    </g>
+
+    <!-- Mid-ground stars (slightly brighter) -->
+    <g opacity="0.15" filter="url(#starBlur)">
+      <circle cx="235" cy="245" r="2" fill="#E8D8C8"/>
+      <circle cx="770" cy="350" r="1.8" fill="#D8D0E8"/>
+      <circle cx="190" cy="655" r="2" fill="#E0D8E8"/>
+      <circle cx="825" cy="695" r="1.6" fill="#E8D8C8"/>
+      <circle cx="390" cy="185" r="1.7" fill="#D8D0E8"/>
+      <circle cx="655" cy="840" r="1.8" fill="#E0D8E8"/>
+    </g>
+
+    <!-- ============================================ -->
+    <!-- CROSS RADIANCE                               -->
+    <!-- (subtle 4-directional rays from chevron tip) -->
+    <!-- ============================================ -->
+
+    <!-- Layer 1: Wide ambient bloom -->
+    <g mask="url(#rayMask)" filter="url(#wideGlow)" opacity="0.18">
+      <!-- Primary cross (vertical + horizontal) -->
+      <line x1="530" y1="0" x2="530" y2="1024" stroke="#E8A87C" stroke-width="16"/>
+      <line x1="0" y1="500" x2="1024" y2="500" stroke="#E8A87C" stroke-width="14"/>
+      <!-- Subtle diagonal accent -->
+      <line x1="100" y1="70" x2="960" y2="930" stroke="#7744AA" stroke-width="8" opacity="0.5"/>
+      <line x1="960" y1="70" x2="100" y2="930" stroke="#7744AA" stroke-width="8" opacity="0.5"/>
+    </g>
+
+    <!-- Layer 2: Medium glow rays -->
+    <g mask="url(#rayMask)" filter="url(#medGlow)" opacity="0.22">
+      <line x1="530" y1="30" x2="530" y2="994" stroke="#F0D9B5" stroke-width="3.5"/>
+      <line x1="30" y1="500" x2="994" y2="500" stroke="#F0D9B5" stroke-width="3"/>
+    </g>
+
+    <!-- Layer 3: Thin bright core rays -->
+    <g mask="url(#rayMask)" opacity="0.3">
+      <line x1="530" y1="60" x2="530" y2="940" stroke="#F0D9B5" stroke-width="1.5" filter="url(#spikeGlow)"/>
+      <line x1="60" y1="500" x2="940" y2="500" stroke="#F0D9B5" stroke-width="1.3" filter="url(#spikeGlow)"/>
+    </g>
+
+    <!-- ============================================ -->
+    <!-- STAR GLOW AT CHEVRON TIP                     -->
+    <!-- (the "Alpha Crucis" — brightest point)       -->
+    <!-- ============================================ -->
+
+    <!-- Wide halo -->
+    <circle cx="530" cy="500" r="80" fill="url(#tipGlow)" opacity="0.3" filter="url(#wideGlow)"/>
+
+    <!-- Core star glow -->
+    <g filter="url(#starGlow)">
+      <circle cx="530" cy="500" r="40" fill="url(#tipGlow)" opacity="0.5"/>
+      <circle cx="530" cy="500" r="18" fill="#FFF0D8" opacity="0.4"/>
+    </g>
+
+    <!-- 4-pointed diffraction spike at tip -->
+    <g filter="url(#spikeGlow)" opacity="0.45">
+      <line x1="530" y1="455" x2="530" y2="545" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="485" y1="500" x2="575" y2="500" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+
+    <!-- ============================================ -->
+    <!-- PROMPT SYMBOL: >                             -->
+    <!-- (geometric chevron, the hero element)        -->
+    <!-- ============================================ -->
+
+    <!-- Ambient glow behind prompt -->
+    <path d="M 300 340 L 530 500 L 300 660"
+          fill="none" stroke="#E8A87C" stroke-width="52"
+          stroke-linecap="round" stroke-linejoin="round"
+          opacity="0.15" filter="url(#wideGlow)"/>
+
+    <!-- Main chevron with glow -->
+    <g filter="url(#promptGlow)">
+      <path d="M 300 340 L 530 500 L 300 660"
+            fill="none" stroke="url(#promptGrad)"
+            stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- Bright inner edge of chevron -->
+    <path d="M 300 340 L 530 500 L 300 660"
+          fill="none" stroke="#FFF0D8"
+          stroke-width="18" stroke-linecap="round" stroke-linejoin="round"
+          opacity="0.35"/>
+
+    <!-- Hot white core line -->
+    <path d="M 300 340 L 530 500 L 300 660"
+          fill="none" stroke="#FFFFFF"
+          stroke-width="6" stroke-linecap="round" stroke-linejoin="round"
+          opacity="0.5"/>
+
+    <!-- ============================================ -->
+    <!-- CURSOR: _ (block cursor)                     -->
+    <!-- ============================================ -->
+
+    <!-- Ambient cursor glow -->
+    <rect x="595" y="612" width="110" height="52" rx="6"
+          fill="#E8A87C" opacity="0.1" filter="url(#wideGlow)"/>
+
+    <!-- Main cursor with blink + glow -->
+    <g class="cursor" filter="url(#cursorGlow)">
+      <rect x="600" y="618" width="100" height="42" rx="5" fill="#E8A87C" opacity="0.92"/>
+      <rect x="604" y="622" width="92" height="34" rx="3" fill="#D4774B" opacity="0.85"/>
+      <rect x="606" y="624" width="88" height="30" rx="2.5" fill="#E8A87C"/>
+    </g>
+
+  </g>
+</svg>
