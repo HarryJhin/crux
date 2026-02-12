@@ -32,6 +32,8 @@ fn main() {
             KeyBinding::new("cmd-7", actions::SelectTab7, None),
             KeyBinding::new("cmd-8", actions::SelectTab8, None),
             KeyBinding::new("cmd-9", actions::SelectTab9, None),
+            KeyBinding::new("cmd-]", actions::FocusNextPane, None),
+            KeyBinding::new("cmd-[", actions::FocusPrevPane, None),
         ]);
 
         cx.open_window(

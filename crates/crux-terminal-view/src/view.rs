@@ -59,6 +59,16 @@ pub struct CruxTerminalView {
 type Point2D<T> = gpui::Point<T>;
 
 impl CruxTerminalView {
+    /// Returns the current terminal title (set by OSC escape sequence), if any.
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// Returns the current working directory reported by the shell (OSC 7), if any.
+    pub fn cwd(&self) -> Option<&str> {
+        self.terminal.cwd()
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
