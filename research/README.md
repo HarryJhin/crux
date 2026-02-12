@@ -1,6 +1,6 @@
 # Research Documentation Index
 
-> Crux 터미널 에뮬레이터 개발을 위한 기술 조사 문서 모음 (총 26편, ~750KB)
+> Crux 터미널 에뮬레이터 개발을 위한 기술 조사 문서 모음 (총 28편, ~780KB)
 >
 > 모든 문서는 YAML frontmatter를 포함하며, `phase`, `topics`, `related` 필드로 탐색 가능합니다.
 
@@ -35,9 +35,11 @@ research/
 ├── integration/              ← IPC 및 외부 통합
 │   ├── ipc-external-patterns.md  WezTerm 내부, JSON-RPC, 보안, 이벤트 구독
 │   ├── ipc-protocol-design.md    Crux IPC/프로토콜 설계, PaneBackend 인터페이스
-│   └── claude-code-strategy.md   Claude Code 저장소 분석, Feature Request 전략
+│   ├── claude-code-strategy.md   Claude Code 저장소 분석, Feature Request 전략
+│   └── mcp-integration.md        ★ MCP 통합: rmcp SDK, 30개 도구 설계, 아키텍처
 ├── competitive/              ← ★ 경쟁 분석 (신규)
-│   └── ghostty-warp-analysis.md  Ghostty 아키텍처 + Warp 대체 분석 + 포지셔닝
+│   ├── ghostty-warp-analysis.md  Ghostty 아키텍처 + Warp 대체 분석 + 포지셔닝
+│   └── terminal-structures.md    ★ 5대 터미널 프로젝트 구조 비교 (Alacritty/WezTerm/Rio/Ghostty/Zed)
 └── platform/                 ← macOS 플랫폼 네이티브
     ├── ime-clipboard.md          한국어 IME, NSPasteboard, objc2, 드래그&드롭
     ├── homebrew-distribution.md  Homebrew, 코드 서명, 공증, Universal Binary
@@ -70,6 +72,7 @@ research/
 |----------|------------|
 | [integration/ipc-external-patterns.md](integration/ipc-external-patterns.md) | WezTerm CLI 소스 분석, JSON-RPC 패턴, 보안 |
 | [integration/ipc-protocol-design.md](integration/ipc-protocol-design.md) | Crux 프로토콜 설계, CLI 인터페이스 |
+| [integration/mcp-integration.md](integration/mcp-integration.md) | ★ MCP 프로토콜, rmcp SDK, 30개 도구 설계, 아키텍처 |
 | [core/shell-integration.md](core/shell-integration.md) | OSC 7/133/1337, 쉘 자동 주입, 명령 경계 |
 | [gpui/widgets-integration.md](gpui/widgets-integration.md) | ★ DockArea, Tabs, ResizablePanel 통합 패턴 |
 
@@ -93,6 +96,7 @@ research/
 | [core/tmux-compatibility.md](core/tmux-compatibility.md) | ★ VT 호환 매트릭스, Control Mode, DECLRMM |
 | [integration/ipc-protocol-design.md](integration/ipc-protocol-design.md) | Claude Code Agent Teams PaneBackend |
 | [integration/claude-code-strategy.md](integration/claude-code-strategy.md) | Feature Request 전략, 커뮤니티 참여 |
+| [integration/mcp-integration.md](integration/mcp-integration.md) | ★ MCP 차별화 도구 10개, 보안, 구현 로드맵 |
 | [core/config-system.md](core/config-system.md) | TOML 설정, 핫 리로드, figment, 스키마 검증 |
 
 ### Phase 6: Homebrew Distribution
@@ -104,6 +108,7 @@ research/
 | Document | Key Topics |
 |----------|------------|
 | [competitive/ghostty-warp-analysis.md](competitive/ghostty-warp-analysis.md) | ★ Ghostty 아키텍처, Warp 대체 분석, 포지셔닝 |
+| [competitive/terminal-structures.md](competitive/terminal-structures.md) | ★ 프로젝트 구조 비교: 크레이트 분리, 렌더링, 최적화 패턴 |
 
 ### Future: Accessibility
 | Document | Key Topics |
@@ -128,6 +133,7 @@ research/
 | **클립보드/드래그&드롭** | [platform/ime-clipboard.md](platform/ime-clipboard.md) § 3 | — |
 | **그래픽스 프로토콜** | [core/graphics-protocols.md](core/graphics-protocols.md) | [core/terminal-emulation.md](core/terminal-emulation.md) |
 | **tmux 호환성** | [core/tmux-compatibility.md](core/tmux-compatibility.md) | [core/terminal-emulation.md](core/terminal-emulation.md) |
+| **MCP 통합 (AI Agent)** | [integration/mcp-integration.md](integration/mcp-integration.md) | [integration/ipc-protocol-design.md](integration/ipc-protocol-design.md) |
 | **Claude Code 통합** | [integration/claude-code-strategy.md](integration/claude-code-strategy.md) | [integration/ipc-protocol-design.md](integration/ipc-protocol-design.md) § 3 |
 | **Homebrew 배포** | [platform/homebrew-distribution.md](platform/homebrew-distribution.md) | [integration/claude-code-strategy.md](integration/claude-code-strategy.md) |
 | **쉘 통합 (OSC 133)** | [core/shell-integration.md](core/shell-integration.md) | [core/terminal-emulation.md](core/terminal-emulation.md) |
@@ -138,7 +144,7 @@ research/
 | **마우스 리포팅** | [core/mouse-reporting.md](core/mouse-reporting.md) | [core/keymapping.md](core/keymapping.md) |
 | **성능 최적화** | [core/performance.md](core/performance.md) | [gpui/framework.md](gpui/framework.md) |
 | **하이퍼링크 (OSC 8)** | [core/hyperlinks.md](core/hyperlinks.md) | [core/terminal-emulation.md](core/terminal-emulation.md) |
-| **경쟁 분석/포지셔닝** | [competitive/ghostty-warp-analysis.md](competitive/ghostty-warp-analysis.md) | 전체 |
+| **경쟁 분석/포지셔닝** | [competitive/ghostty-warp-analysis.md](competitive/ghostty-warp-analysis.md) | [competitive/terminal-structures.md](competitive/terminal-structures.md) |
 | **누락 영역 확인** | [gap-analysis.md](gap-analysis.md) | 전체 |
 
 ---
@@ -176,22 +182,29 @@ core/accessibility     ──► core/terminal-architecture
 
 integration/ipc-external-patterns ◄──► integration/ipc-protocol-design
                                               │
-                                              ▼
-                                   integration/claude-code-strategy
-                                              │
-                                              ▼
-                                   platform/homebrew-distribution
+                                      ┌───────┴───────┐
+                                      ▼               ▼
+                           integration/        integration/
+                           claude-code-strategy mcp-integration ★
+                                      │
+                                      ▼
+                           platform/homebrew-distribution
 
 competitive/ghostty-warp-analysis ★ ──► 전체 문서 참조
+
+competitive/terminal-structures ★ ──► core/terminal-architecture
+                                 ──► core/performance
+                                 ──► gpui/terminal-implementations
 ```
 
 ---
 
 ## Notes
 
+- **Integration 문서 4개의 계층**: `ipc-external-patterns.md`(외부 IPC 패턴 조사) → `ipc-protocol-design.md`(Crux IPC 설계) → `claude-code-strategy.md`(Claude Code 통합 전략) → `mcp-integration.md`(MCP 프로토콜 통합, AI 에이전트 도구 설계)
 - **IPC 문서 2개의 범위 차이**: `ipc-external-patterns.md`는 외부 터미널의 IPC 패턴(WezTerm 소스 레벨, JSON-RPC, 보안)을 다루고, `ipc-protocol-design.md`는 Crux 자체 프로토콜 설계를 다룹니다.
 - **GPUI 문서 4개의 계층**: `framework.md`(GPUI란 무엇인가) → `terminal-implementations.md`(다른 사람들은 어떻게 만들었나) → `bootstrap.md`(우리는 어떻게 시작하나) → `widgets-integration.md`(탭/패널을 어떻게 조합하나)
 - **core/ 문서 확장**: 초기 4개 → 14개로 확장. 최근 그래픽스 프로토콜, tmux 호환성 문서 추가.
-- **competitive/ 디렉토리 신규**: Ghostty 아키텍처 분석 + Warp 대체 전략. 프로젝트 포지셔닝의 핵심 참고 자료.
+- **competitive/ 디렉토리 확장**: Ghostty/Warp 분석에 이어 5대 터미널(Alacritty, WezTerm, Rio, Ghostty, Zed) 프로젝트 구조 비교 문서 추가. 크레이트 분리 전략, 렌더링 파이프라인, 성능 최적화 패턴의 횡단 비교 제공.
 - **gap-analysis.md**: 3차 업데이트 완료 (status: current). Critical 갭 해소율 79% (11/14).
 - **keymapping.md 보강**: §16에 Kitty Keyboard Protocol 상세 (~307줄) 추가. CSI u 포맷, 5개 Flag, 스택 메커니즘 포함.

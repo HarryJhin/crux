@@ -2,7 +2,7 @@
 
 > Detailed phased implementation plan for the Crux terminal emulator
 > Created: 2026-02-11 | Updated: 2026-02-12
-> End Goal: Homebrew distribution + Claude Code Feature Request integration
+> End Goal: Homebrew distribution + Claude Code Feature Request + Native MCP Server integration
 
 ---
 
@@ -267,6 +267,71 @@ parking_lot = "0.12"
 - [ ] Set `CRUX_SOCKET` in all child PTY processes
 - [ ] Set `CRUX_PANE` to current pane ID in each PTY
 
+### 2.9 MCP Server — Core (crux-mcp)
+
+Native MCP (Model Context Protocol) server embedded in Crux, enabling all MCP-compatible AI agents (Claude Desktop, Claude Code, Cursor, etc.) to programmatically control Crux. See [research/integration/mcp-integration.md](research/integration/mcp-integration.md) for full design.
+
+**Architecture**: Separate Tokio runtime thread + Unix socket (`~/.crux/mcp.sock`), communicating with GPUI main thread via `mpsc` channel.
+
+- [ ] Create `crux-mcp` crate with `rmcp` SDK integration
+  - `rmcp = { version = "0.15", features = ["server", "macros", "transport-io"] }`
+  - `tokio`, `axum` for Unix socket / HTTP transport
+- [ ] MCP server lifecycle: start on app launch, stop on app exit
+  - Separate thread with `tokio::runtime::Runtime`
+  - `mpsc::Sender<PaneCommand>` for MCP → GPUI commands
+  - `oneshot::Sender` for GPUI → MCP responses
+- [ ] Unix socket transport at `~/.crux/mcp.sock`
+  - File permissions `0o600` (owner-only)
+  - Cleanup on graceful shutdown
+- [ ] HTTP localhost fallback transport (`127.0.0.1:{port}`)
+- [ ] MCP capability negotiation: `tools` + `resources`
+- [ ] Pane management tools (5):
+  - [ ] `crux_create_pane` — split pane (horizontal/vertical), return PaneInfo
+  - [ ] `crux_close_pane` — close by pane_id
+  - [ ] `crux_focus_pane` — switch focus
+  - [ ] `crux_list_panes` — all panes with metadata (id, pid, cwd, size)
+  - [ ] `crux_resize_pane` — adjust cols/rows
+- [ ] Command execution tools (5):
+  - [ ] `crux_execute_command` — run command, return exit_code + stdout
+  - [ ] `crux_send_keys` — raw key sequences (Ctrl+C, Enter, arrows)
+  - [ ] `crux_send_text` — type text into pane
+  - [ ] `crux_get_output` — capture recent N lines
+  - [ ] `crux_wait_for_output` — block until pattern matches (with timeout)
+- [ ] State inspection tools (5):
+  - [ ] `crux_get_current_directory` — shell CWD (via OSC 7)
+  - [ ] `crux_get_running_process` — foreground process name + pid
+  - [ ] `crux_get_pane_state` — full snapshot (cols, rows, cursor, scroll)
+  - [ ] `crux_get_selection` — currently selected text
+  - [ ] `crux_get_scrollback` — scrollback buffer with offset/limit pagination
+- [ ] Content capture tools (5):
+  - [ ] `crux_screenshot_pane` — GPUI render to base64 PNG
+  - [ ] `crux_get_raw_text` — ANSI-stripped plain text
+  - [ ] `crux_get_formatted_output` — ANSI codes preserved
+  - [ ] `crux_save_session` — serialize session state
+  - [ ] `crux_restore_session` — restore saved session
+- [ ] MCP resources: expose pane scrollback as `crux://pane/{id}/scrollback`
+
+### 2.10 MCP Bridge Binary (crux-mcp-bridge)
+
+stdio ↔ Unix socket bridge for Claude Desktop compatibility (Claude Desktop only supports stdio transport).
+
+- [ ] Create `crux-mcp-bridge` binary crate
+  - Reads JSON-RPC from stdin, forwards to `~/.crux/mcp.sock`
+  - Reads responses from socket, writes to stdout
+- [ ] Socket discovery: `$CRUX_MCP_SOCKET` → `~/.crux/mcp.sock`
+- [ ] Connection retry with backoff (Crux may not be running yet)
+- [ ] Claude Desktop config example:
+  ```json
+  {
+    "mcpServers": {
+      "crux-terminal": {
+        "command": "crux-mcp-bridge",
+        "args": ["--socket", "~/.crux/mcp.sock"]
+      }
+    }
+  }
+  ```
+
 ### Milestone 2 Deliverable
 
 A multi-pane terminal where:
@@ -276,6 +341,8 @@ A multi-pane terminal where:
 - `crux cli split-pane` creates a new pane and returns its ID
 - `crux cli send-text --pane-id 42 "ls\n"` sends text to any pane
 - `crux cli list --format json` returns structured pane info
+- **20 MCP tools expose full terminal control to any AI agent**
+- **Claude Desktop can control Crux via `crux-mcp-bridge`**
 - Claude Code could theoretically use Crux as an Agent Teams backend
 
 ---
@@ -543,7 +610,62 @@ interface PaneBackend {
   - Messages routed correctly
   - Panes cleaned up on shutdown
 
-### 5.4 Configuration System
+### 5.4 MCP Server — Differentiation Tools (crux-mcp Phase 2)
+
+Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, DockArea). Built on the Phase 2.9 MCP server foundation.
+
+- [ ] `crux_parse_output_structured` — parse terminal output into structured JSON
+  - Table detection (borders, columns, headers) → JSON array
+  - Tree view parsing → hierarchical object
+  - Error message extraction → `{file, line, error, suggestion}`
+  - Leverages GPUI rendering engine's visual structure awareness
+- [ ] `crux_visual_diff` — screenshot before/after command, return diff
+  - Pixel diff + semantic diff ("table gained 3 rows")
+  - Useful for TUI app state verification
+- [ ] `crux_type_with_ime` — Korean/Japanese/Chinese IME input simulation
+  - Waits for composition commit (not just key send)
+  - Guarantees preedit never reaches PTY
+  - Only terminal MCP with CJK automation support
+- [ ] `crux_clipboard_context` — clipboard history with source attribution
+  - Track source pane, timestamp, content type (text/image/RTF/file)
+  - `crux_paste_smart` — format-adaptive paste (JSON → pretty-print)
+- [ ] `crux_load_workspace` — predefined multi-pane layouts for agent teams
+  - Presets: `debug-session`, `full-stack`, `agent-team-3`, `monitoring`
+  - Custom layouts via JSON schema
+  - DockArea programmatic layout API
+- [ ] `crux_stream_output` — real-time output streaming via SSE
+  - Event types: `output`, `exit`, `error`
+  - Server-side pattern filtering
+  - Enables reactive agents (cancel on first error)
+- [ ] `crux_coordinate_panes` — multi-pane orchestrated execution
+  - Declarative steps: `[{pane, command, wait_for}, ...]`
+  - Sequential conditional execution in single tool call
+  - Killer feature for Agent Teams service startup ordering
+- [ ] `crux_inject_context` — dynamic shell env injection without restart
+  - Temporary env vars with auto-expiry (N commands)
+  - Alias/function injection
+- [ ] `crux_create_snapshot` / `crux_restore_snapshot` — full terminal state serialization
+  - All panes, processes, scrollback, environment
+  - Reproducible debugging sessions
+- [ ] `crux_detect_intent` — command + output → intent classification
+  - Categories: `build`, `test`, `error`, `wait_input`, `success`
+  - Suggested next actions based on state
+
+### 5.5 MCP Security Configuration
+
+- [ ] Command whitelist/blocklist in `config.toml`:
+  ```toml
+  [mcp.security]
+  allowed_commands = ["ls", "cat", "git *", "cargo *", "npm *"]
+  dangerous_patterns = ["rm", "sudo", "chmod", "kill"]
+  command_timeout_ms = 30000
+  max_panes = 20
+  ```
+- [ ] Dangerous command confirmation prompt (GPUI dialog)
+- [ ] ANSI escape sanitization on output returned via MCP
+- [ ] Rate limiting for MCP tool calls
+
+### 5.6 Configuration System
 
 - [ ] TOML configuration file (`~/.config/crux/config.toml`)
 - [ ] Font family, size, line height
@@ -556,7 +678,7 @@ interface PaneBackend {
 - [ ] Ambiguous width preference
 - [ ] Window opacity, blur
 
-### 5.5 Polish
+### 5.7 Polish
 
 - [ ] Application icon and window chrome
 - [ ] macOS menu bar integration
@@ -568,7 +690,9 @@ interface PaneBackend {
 - tmux works perfectly inside Crux
 - Claude Code Feature Request submitted with working demo
 - Crux CLI matches PaneBackend interface for seamless integration
-- Shell integration provides modern UX features
+- **10 differentiation MCP tools leverage GPUI, IME, clipboard uniquely**
+- **MCP security configuration with command whitelist/blocklist**
+- **`crux_coordinate_panes` enables declarative multi-service orchestration**
 - Full configuration system
 - Production-ready terminal emulator
 
@@ -709,9 +833,11 @@ interface PaneBackend {
 - Resizable panels for split panes
 - Pin to specific GPUI version to avoid breaking changes
 
-### 6. Dual Protocol Strategy
-- **IPC channel** (Unix socket): External process control (CLI, Claude Code, MCP)
+### 6. Triple Protocol Strategy
+- **IPC channel** (Unix socket, `crux:<domain>/<action>`): Low-level terminal control (CLI, internal components)
+- **MCP channel** (Unix socket + stdio bridge, MCP tools): AI-agent-friendly high-level tools (Claude Desktop, Cursor, Claude Code)
 - **In-band channel** (escape sequences): PTY application communication (OSC, DCS, APC)
+- MCP is a wrapper over IPC: `AI Agent → MCP → IPC → Terminal`
 - Custom OSC 7700-7799 for Crux-specific in-band extensions
 
 ### 7. Terminfo Strategy: `xterm-crux`
@@ -755,6 +881,10 @@ interface PaneBackend {
 | **Alacritty deprecation lesson** | Never ship unsigned binaries as Cask. Use Formula (source build) by default, add signed Cask only after proper Developer ID signing |
 | `core-foundation` dependency conflict | GPUI crates.io build may hit `core-foundation 0.10.1` conflict. Fix: `cargo update` or `[patch.crates-io]` override |
 | Xcode requirement for GPUI | GPUI needs full Xcode.app (not just CLT) for Metal shader compilation. Document in README, verify in CI |
+| **rmcp Edition 2024 (nightly)** | `rmcp` v0.15 requires Rust Edition 2024 (nightly). Monitor stable promotion timeline. Fallback: use `rust-mcp-sdk` crate or pin older rmcp version |
+| **MCP protocol evolution** | MCP spec is still evolving (2025-11-25 current). Pin to spec version, maintain adapter layer for protocol changes |
+| **GPUI main thread constraint** | MCP server needs separate Tokio thread since GPUI owns main thread (macOS requirement). Use `mpsc`/`oneshot` channels, test for deadlocks |
+| **MCP security surface** | MCP tools expose arbitrary command execution. Implement command whitelist, dangerous command confirmation, ANSI sanitization, rate limiting |
 
 ---
 
@@ -778,6 +908,13 @@ interface PaneBackend {
 - [Terminfo Entry Research](research/terminfo-research.md)
 - [Key Mapping & Escape Sequences](research/keymapping-research.md)
 - [GPUI Project Bootstrap](research/gpui-bootstrap.md)
+
+### MCP Integration Research
+- [MCP Integration Strategy](research/integration/mcp-integration.md) -- Protocol, SDK, 30 tools design, architecture
+- [Model Context Protocol Specification](https://modelcontextprotocol.io/specification/2025-11-25) -- Official spec
+- [rmcp (Official Rust MCP SDK)](https://github.com/modelcontextprotocol/rust-sdk) -- v0.15.0
+- [terminal-mcp](https://github.com/elleryfamilia/terminal-mcp) -- Reference terminal MCP implementation
+- [conductor-mcp](https://github.com/GGPrompts/conductor-mcp) -- 33-tool Claude Code orchestration reference
 
 ### External References
 - [Zed Source Code](https://github.com/zed-industries/zed) -- GPUI reference implementation
