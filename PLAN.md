@@ -203,7 +203,8 @@ libc = "0.2"
   - DockArea provides built-in drag-and-drop (needs verification)
 - [x] Tab title from active pane's shell title
   - Priority: OSC title > CWD basename (via OSC 7) > "Terminal" fallback
-- [ ] Tab close confirmation when process is running
+- [x] Tab close confirmation when process is running
+  - Cmd+W checks is_process_running(), skips if active; Cmd+Shift+W force-closes
 
 ### 2.2 Split Panes
 
@@ -218,18 +219,22 @@ libc = "0.2"
   - FocusNextPane/FocusPrevPane cycle through TabPanels in DockItem tree
 - [x] Pane zoom toggle (Cmd+Shift+Enter)
   - ToggleZoom action on focused TabPanel
-- [ ] Pane close with graceful process termination
+- [x] Pane close with graceful process termination
+  - IPC close-pane with force:false checks process status; Drop impl does SIGHUP→wait→SIGKILL
 - [ ] Top-level window split vs individual pane split
 
 ### 2.3 Pane Manager
 
 - [x] `PaneManager` with `Arc<RwLock<HashMap<PaneId, PaneState>>>`
   - DockArea serves as pane manager via its internal tree structure
-- [ ] Atomic pane ID generation (`AtomicU64`)
+- [x] Atomic pane ID generation (`AtomicU64`)
+  - CruxApp::next_pane_id is AtomicU64 with Ordering::Relaxed
 - [x] Pane lifecycle: create -> active -> close
   - Create via NewTab action, DockArea manages lifecycle
-- [ ] Pane event broadcasting (`broadcast::Sender<PaneEvent>`)
-- [ ] Track pane hierarchy (parent-child for splits)
+- [x] Pane event broadcasting (`broadcast::Sender<PaneEvent>`)
+  - PaneEvent enum in crux-protocol; emit_pane_event/drain_pane_events in CruxApp
+- [x] Track pane hierarchy (parent-child for splits)
+  - pane_parents HashMap<PaneId, PaneId> with pane_parent()/pane_children() getters
 
 ### 2.4 Shell Integration (OSC 133 & OSC 7)
 
@@ -239,7 +244,8 @@ libc = "0.2"
   - Byte-stream scanner in PTY read loop (alacritty_terminal does not handle OSC 133)
 - [x] OSC 7 CWD tracking: `\e]7;file://hostname/path\a`
   - Byte-stream scanner in PTY read loop, percent-decoding, CWD stored in CruxTerminal
-- [ ] Semantic zones: prompt, command, output regions
+- [x] Semantic zones: prompt, command, output regions
+  - SemanticZone struct with start/end line/col, zone_type, exit_code; built from OSC 133 markers
 - [x] Smart navigation: jump between prompts (Cmd+Up/Down)
 - [x] Shell integration scripts for zsh/bash/fish (bundled)
   - Located in `extra/shell-integration/`
@@ -261,8 +267,10 @@ libc = "0.2"
 - [x] `crux:pane/list` -- list all panes with metadata (JSON)
 - [x] `crux:pane/activate` -- focus a pane
 - [x] `crux:pane/close` -- close pane (graceful or forced)
-- [ ] `crux:window/create` -- new window
-- [ ] `crux:window/list` -- list windows
+- [x] `crux:window/create` -- new window
+  - Single-window mode: returns existing WindowId(0); CLI: crux cli window-create
+- [x] `crux:window/list` -- list windows
+  - Returns single window with pane count; CLI: crux cli window-list [--format json]
 
 ### 2.7 CLI Client
 
