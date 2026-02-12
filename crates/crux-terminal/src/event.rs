@@ -2,6 +2,32 @@ use std::sync::mpsc;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener};
 
+/// Semantic zone types from OSC 133 (FinalTerm) shell integration.
+///
+/// Shells that support prompt marking emit OSC 133 sequences to delimit
+/// regions of terminal output into prompt, user input, and command output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticZoneType {
+    /// Prompt text (between 133;A and 133;B).
+    Prompt,
+    /// User-typed command (between 133;B and 133;C).
+    Input,
+    /// Command output (between 133;C and 133;D).
+    Output,
+}
+
+/// A semantic zone marking a region of terminal output.
+#[derive(Debug, Clone)]
+pub struct SemanticZone {
+    pub start_line: i32,
+    pub start_col: usize,
+    pub end_line: i32,
+    pub end_col: usize,
+    pub zone_type: SemanticZoneType,
+    /// Exit code from 133;D (only meaningful for Output zones).
+    pub exit_code: Option<i32>,
+}
+
 /// Events produced by the terminal emulator for the UI layer.
 #[derive(Debug, Clone)]
 pub enum TerminalEvent {
@@ -20,6 +46,17 @@ pub enum TerminalEvent {
     /// The payload is the decoded directory path (e.g. `/Users/jjh/Projects`).
     /// Shells emit `ESC ] 7 ; file://hostname/path ST` after each command.
     CwdChanged(String),
+    /// Shell integration prompt mark (OSC 133).
+    ///
+    /// Emitted when the byte-stream scanner detects an OSC 133 sequence.
+    /// The payload indicates which boundary was crossed, with an optional
+    /// exit code for `D` (command-complete) markers.
+    PromptMark {
+        mark: SemanticZoneType,
+        /// Exit code carried by `133;D;N`. `None` for A/B/C markers
+        /// and for D markers that omit the exit code.
+        exit_code: Option<i32>,
+    },
 }
 
 /// Bridges alacritty_terminal events into our channel-based system.
@@ -126,5 +163,45 @@ mod tests {
         // but verify the variant is constructible and matchable.
         let event = TerminalEvent::CwdChanged("/Users/jjh".to_string());
         assert!(matches!(event, TerminalEvent::CwdChanged(p) if p == "/Users/jjh"));
+    }
+
+    #[test]
+    fn test_prompt_mark_event() {
+        // PromptMark is produced by the OSC 133 scanner, not the
+        // EventListener bridge. Verify the variant is constructible.
+        let event = TerminalEvent::PromptMark {
+            mark: SemanticZoneType::Prompt,
+            exit_code: None,
+        };
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Prompt,
+                exit_code: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_prompt_mark_with_exit_code() {
+        let event = TerminalEvent::PromptMark {
+            mark: SemanticZoneType::Output,
+            exit_code: Some(1),
+        };
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Output,
+                exit_code: Some(1),
+            }
+        ));
+    }
+
+    #[test]
+    fn test_semantic_zone_type_equality() {
+        assert_eq!(SemanticZoneType::Prompt, SemanticZoneType::Prompt);
+        assert_eq!(SemanticZoneType::Input, SemanticZoneType::Input);
+        assert_eq!(SemanticZoneType::Output, SemanticZoneType::Output);
+        assert_ne!(SemanticZoneType::Prompt, SemanticZoneType::Input);
     }
 }

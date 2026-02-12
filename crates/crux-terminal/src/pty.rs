@@ -8,7 +8,7 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::vte::ansi::{self, Processor};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
-use crate::event::{CruxEventListener, TerminalEvent};
+use crate::event::{CruxEventListener, SemanticZoneType, TerminalEvent};
 use crate::TerminalSize;
 
 /// Check if a terminfo entry is available on the system.
@@ -88,6 +88,9 @@ fn check_terminfo_available(name: &str) -> bool {
 pub fn spawn_pty(
     shell: &str,
     size: &TerminalSize,
+    cwd: Option<&str>,
+    command: Option<&[String]>,
+    env: Option<&std::collections::HashMap<String, String>>,
 ) -> anyhow::Result<(
     Box<dyn MasterPty + Send>,
     Box<dyn portable_pty::Child + Send + Sync>,
@@ -100,8 +103,23 @@ pub fn spawn_pty(
         pixel_height: (size.rows as f32 * size.cell_height) as u16,
     })?;
 
-    let mut cmd = CommandBuilder::new(shell);
-    cmd.arg("-l"); // login shell
+    let mut cmd = if let Some(args) = command {
+        // Run a specific command instead of the default shell.
+        let mut builder = CommandBuilder::new(&args[0]);
+        for arg in &args[1..] {
+            builder.arg(arg);
+        }
+        builder
+    } else {
+        let mut builder = CommandBuilder::new(shell);
+        builder.arg("-l"); // login shell
+        builder
+    };
+
+    // Set working directory if specified.
+    if let Some(dir) = cwd {
+        cmd.cwd(dir);
+    }
 
     // Set terminal environment variables.
     let term_name = if check_terminfo_available("xterm-crux") {
@@ -114,6 +132,13 @@ pub fn spawn_pty(
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "Crux");
     cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+
+    // Set additional environment variables from params.
+    if let Some(extra_env) = env {
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
+    }
 
     let child = pair.slave.spawn_command(cmd)?;
     Ok((pair.master, child))
@@ -207,6 +232,102 @@ fn scan_osc7(buf: &[u8], event_tx: &mpsc::Sender<TerminalEvent>) {
     }
 }
 
+/// Scan a byte buffer for OSC 133 (FinalTerm) prompt-marking sequences.
+///
+/// OSC 133 markers:
+///   `ESC ] 133 ; A ST` — Prompt start
+///   `ESC ] 133 ; B ST` — Command start (user pressed Enter)
+///   `ESC ] 133 ; C ST` — Output start
+///   `ESC ] 133 ; D ST` — Command complete (optionally `133;D;N` with exit code)
+///
+/// ST is BEL (0x07) or ESC \ (0x1b 0x5c).
+///
+/// Like `scan_osc7`, this is stateless per call — sequences split across
+/// reads are missed, which is acceptable given the short payload size.
+fn scan_osc133(buf: &[u8], event_tx: &mpsc::Sender<TerminalEvent>) {
+    // OSC introducer: ESC ] (0x1b 0x5d)
+    // Minimum sequence: ESC ] 1 3 3 ; A BEL = 7 bytes
+    let mut i = 0;
+    while i + 6 < buf.len() {
+        // Look for ESC ]
+        if buf[i] != 0x1b || buf[i + 1] != 0x5d {
+            i += 1;
+            continue;
+        }
+
+        // Check for "133;" after ESC ]
+        if i + 5 >= buf.len()
+            || buf[i + 2] != b'1'
+            || buf[i + 3] != b'3'
+            || buf[i + 4] != b'3'
+            || buf[i + 5] != b';'
+        {
+            i += 2;
+            continue;
+        }
+
+        // Read the payload after "133;" (at least the marker letter).
+        let payload_start = i + 6;
+        if payload_start >= buf.len() {
+            break;
+        }
+
+        // Find the string terminator: BEL (0x07) or ESC \ (0x1b 0x5c).
+        let mut end = payload_start;
+        let mut found = false;
+        while end < buf.len() {
+            if buf[end] == 0x07 {
+                found = true;
+                break;
+            }
+            if buf[end] == 0x1b && end + 1 < buf.len() && buf[end + 1] == 0x5c {
+                found = true;
+                break;
+            }
+            end += 1;
+        }
+
+        if found {
+            if let Ok(payload) = std::str::from_utf8(&buf[payload_start..end]) {
+                let event = match payload.as_bytes().first() {
+                    Some(b'A') => Some(TerminalEvent::PromptMark {
+                        mark: SemanticZoneType::Prompt,
+                        exit_code: None,
+                    }),
+                    Some(b'B') => Some(TerminalEvent::PromptMark {
+                        mark: SemanticZoneType::Input,
+                        exit_code: None,
+                    }),
+                    Some(b'C') => Some(TerminalEvent::PromptMark {
+                        mark: SemanticZoneType::Output,
+                        exit_code: None,
+                    }),
+                    Some(b'D') => {
+                        // Parse optional exit code: "D" or "D;N"
+                        let exit_code = payload
+                            .strip_prefix("D;")
+                            .and_then(|s| s.parse::<i32>().ok());
+                        Some(TerminalEvent::PromptMark {
+                            mark: SemanticZoneType::Output,
+                            exit_code,
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    log::debug!("OSC 133: {}", payload);
+                    let _ = event_tx.send(event);
+                }
+            }
+            // Skip past the terminator.
+            i = if buf[end] == 0x07 { end + 1 } else { end + 2 };
+        } else {
+            // Incomplete sequence — skip the ESC ] and continue.
+            i += 2;
+        }
+    }
+}
+
 /// Start a background thread that reads PTY output and feeds it into the
 /// alacritty_terminal parser, then signals wakeup.
 ///
@@ -237,11 +358,12 @@ pub fn start_pty_read_loop(
                 match reader.read(&mut buf) {
                     Ok(0) => break, // EOF
                     Ok(n) => {
-                        // Scan for OSC 7 before feeding to the VTE parser.
-                        // alacritty_terminal does not handle OSC 7, so we
-                        // intercept it here. The VTE parser will log it as
-                        // "unhandled osc_dispatch" but otherwise ignore it.
+                        // Scan for OSC sequences before feeding to the VTE parser.
+                        // alacritty_terminal does not handle OSC 7 or OSC 133,
+                        // so we intercept them here. The VTE parser will log
+                        // them as "unhandled osc_dispatch" but otherwise ignore them.
                         scan_osc7(&buf[..n], &event_tx);
+                        scan_osc133(&buf[..n], &event_tx);
 
                         {
                             let mut term = term.lock();
@@ -528,5 +650,204 @@ mod tests {
         let buf = b"\x1b]0;my title\x07";
         scan_osc7(buf, &tx);
         assert!(rx.try_recv().is_err(), "OSC 0 should not emit CwdChanged");
+    }
+
+    // --- OSC 133 tests ---
+
+    #[test]
+    fn test_scan_osc133_prompt_start_bel() {
+        let (tx, rx) = mpsc::channel();
+        let buf = b"\x1b]133;A\x07";
+        scan_osc133(buf, &tx);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Prompt,
+                exit_code: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_scan_osc133_prompt_start_st() {
+        let (tx, rx) = mpsc::channel();
+        // ESC ] 133;A ESC backslash
+        let buf = b"\x1b]133;A\x1b\\";
+        scan_osc133(buf, &tx);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Prompt,
+                exit_code: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_scan_osc133_command_start() {
+        let (tx, rx) = mpsc::channel();
+        let buf = b"\x1b]133;B\x07";
+        scan_osc133(buf, &tx);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Input,
+                exit_code: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_scan_osc133_output_start() {
+        let (tx, rx) = mpsc::channel();
+        let buf = b"\x1b]133;C\x07";
+        scan_osc133(buf, &tx);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Output,
+                exit_code: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_scan_osc133_command_complete_no_exit_code() {
+        let (tx, rx) = mpsc::channel();
+        let buf = b"\x1b]133;D\x07";
+        scan_osc133(buf, &tx);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Output,
+                exit_code: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_scan_osc133_command_complete_with_exit_code() {
+        let (tx, rx) = mpsc::channel();
+        let buf = b"\x1b]133;D;0\x07";
+        scan_osc133(buf, &tx);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Output,
+                exit_code: Some(0),
+            }
+        ));
+    }
+
+    #[test]
+    fn test_scan_osc133_command_complete_nonzero_exit() {
+        let (tx, rx) = mpsc::channel();
+        let buf = b"\x1b]133;D;127\x07";
+        scan_osc133(buf, &tx);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(
+            event,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Output,
+                exit_code: Some(127),
+            }
+        ));
+    }
+
+    #[test]
+    fn test_scan_osc133_embedded_in_output() {
+        let (tx, rx) = mpsc::channel();
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"some output ");
+        buf.extend_from_slice(b"\x1b]133;A\x07");
+        buf.extend_from_slice(b"$ ");
+        buf.extend_from_slice(b"\x1b]133;B\x07");
+        scan_osc133(&buf, &tx);
+        let event1 = rx.try_recv().unwrap();
+        assert!(matches!(
+            event1,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Prompt,
+                ..
+            }
+        ));
+        let event2 = rx.try_recv().unwrap();
+        assert!(matches!(
+            event2,
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Input,
+                ..
+            }
+        ));
+        assert!(rx.try_recv().is_err(), "should only emit two events");
+    }
+
+    #[test]
+    fn test_scan_osc133_no_osc133_present() {
+        let (tx, rx) = mpsc::channel();
+        let buf = b"just some normal terminal output\r\n";
+        scan_osc133(buf, &tx);
+        assert!(rx.try_recv().is_err(), "no events should be emitted");
+    }
+
+    #[test]
+    fn test_scan_osc133_other_osc_ignored() {
+        let (tx, rx) = mpsc::channel();
+        // OSC 7 should not trigger PromptMark.
+        let buf = b"\x1b]7;file://host/tmp\x07";
+        scan_osc133(buf, &tx);
+        assert!(rx.try_recv().is_err(), "OSC 7 should not emit PromptMark");
+    }
+
+    #[test]
+    fn test_scan_osc133_full_prompt_cycle() {
+        let (tx, rx) = mpsc::channel();
+        // Simulate a full shell integration cycle: A B C D
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"\x1b]133;A\x07");
+        buf.extend_from_slice(b"$ ");
+        buf.extend_from_slice(b"\x1b]133;B\x07");
+        buf.extend_from_slice(b"ls\r\n");
+        buf.extend_from_slice(b"\x1b]133;C\x07");
+        buf.extend_from_slice(b"file1 file2\r\n");
+        buf.extend_from_slice(b"\x1b]133;D;0\x07");
+        scan_osc133(&buf, &tx);
+
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert_eq!(events.len(), 4, "should emit 4 events for A/B/C/D");
+        assert!(matches!(
+            events[0],
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Prompt,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[1],
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Input,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[2],
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Output,
+                exit_code: None,
+            }
+        ));
+        assert!(matches!(
+            events[3],
+            TerminalEvent::PromptMark {
+                mark: SemanticZoneType::Output,
+                exit_code: Some(0),
+            }
+        ));
     }
 }

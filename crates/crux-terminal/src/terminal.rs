@@ -11,7 +11,7 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape};
 
-use crate::event::{CruxEventListener, TerminalEvent};
+use crate::event::{CruxEventListener, SemanticZone, SemanticZoneType, TerminalEvent};
 use crate::pty;
 
 /// Default scrollback history size in lines.
@@ -115,6 +115,14 @@ pub struct CruxTerminal {
     size: TerminalSize,
     /// Current working directory reported by the shell via OSC 7.
     cwd: Option<String>,
+    /// Completed semantic zones from OSC 133 shell integration.
+    semantic_zones: Vec<SemanticZone>,
+    /// Current zone being built (tracks the last seen marker).
+    current_zone_type: Option<SemanticZoneType>,
+    /// Line where the current zone started.
+    current_zone_start_line: i32,
+    /// Column where the current zone started.
+    current_zone_start_col: usize,
 }
 
 impl CruxTerminal {
@@ -122,7 +130,17 @@ impl CruxTerminal {
     ///
     /// If `shell` is `None`, the user's default shell is detected from
     /// the `SHELL` environment variable (falling back to `/bin/zsh`).
-    pub fn new(shell: Option<String>, size: TerminalSize) -> anyhow::Result<Self> {
+    ///
+    /// Optional `cwd` sets the working directory for the new shell.
+    /// Optional `command` runs a specific command instead of the login shell.
+    /// Optional `env` adds extra environment variables to the child process.
+    pub fn new(
+        shell: Option<String>,
+        size: TerminalSize,
+        cwd: Option<&str>,
+        command: Option<&[String]>,
+        env: Option<&std::collections::HashMap<String, String>>,
+    ) -> anyhow::Result<Self> {
         let shell = shell.unwrap_or_else(pty::detect_shell);
 
         // Event channel for terminal → UI communication.
@@ -136,7 +154,7 @@ impl CruxTerminal {
         let term = Arc::new(FairMutex::new(term));
 
         // Spawn the PTY process.
-        let (master_pty, child) = pty::spawn_pty(&shell, &size)?;
+        let (master_pty, child) = pty::spawn_pty(&shell, &size, cwd, command, env)?;
 
         // Get reader and writer handles from the master PTY.
         let reader = master_pty.try_clone_reader()?;
@@ -161,6 +179,10 @@ impl CruxTerminal {
             event_rx,
             size,
             cwd: None,
+            semantic_zones: Vec::new(),
+            current_zone_type: None,
+            current_zone_start_line: 0,
+            current_zone_start_col: 0,
         })
     }
 
@@ -281,17 +303,63 @@ impl CruxTerminal {
 
     /// Drain pending events from the terminal.
     ///
-    /// Also processes `CwdChanged` events internally to keep the
-    /// stored CWD up to date.
+    /// Also processes `CwdChanged` and `PromptMark` events internally
+    /// to keep the stored CWD and semantic zones up to date.
     pub fn drain_events(&mut self) -> Vec<TerminalEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.event_rx.try_recv() {
-            if let TerminalEvent::CwdChanged(ref path) = event {
-                self.cwd = Some(path.clone());
+            match &event {
+                TerminalEvent::CwdChanged(ref path) => {
+                    self.cwd = Some(path.clone());
+                }
+                TerminalEvent::PromptMark { mark, exit_code } => {
+                    self.handle_prompt_mark(*mark, *exit_code);
+                }
+                _ => {}
             }
             events.push(event);
         }
         events
+    }
+
+    /// Process an OSC 133 prompt mark to build semantic zones.
+    ///
+    /// Zone transitions: A→Prompt, B→Input, C→Output, D→closes Output.
+    /// Each new marker closes the previous zone (if any) and starts a new one.
+    fn handle_prompt_mark(&mut self, mark: SemanticZoneType, exit_code: Option<i32>) {
+        // Use the grid cursor for absolute line coordinates (not viewport-relative).
+        // Line 0 = top of active screen; negative lines = scrollback history.
+        let (cursor_line, cursor_col) = self.with_term(|t| {
+            let point = t.grid().cursor.point;
+            (point.line.0, point.column.0)
+        });
+
+        // Close the current zone if one is open.
+        if let Some(zone_type) = self.current_zone_type.take() {
+            self.semantic_zones.push(SemanticZone {
+                start_line: self.current_zone_start_line,
+                start_col: self.current_zone_start_col,
+                end_line: cursor_line,
+                end_col: cursor_col,
+                zone_type,
+                exit_code: if zone_type == SemanticZoneType::Output {
+                    exit_code
+                } else {
+                    None
+                },
+            });
+        }
+
+        // D (command complete) only closes the Output zone; it does not
+        // start a new zone. A/B/C open their respective zones.
+        if exit_code.is_none() || mark != SemanticZoneType::Output {
+            // For A/B/C markers, start a new zone.
+            // For D without exit_code this branch is unreachable in practice
+            // because scan_osc133 always sets mark=Output for D, but guard anyway.
+            self.current_zone_type = Some(mark);
+            self.current_zone_start_line = cursor_line;
+            self.current_zone_start_col = cursor_col;
+        }
     }
 
     /// Current working directory reported by the shell via OSC 7.
@@ -299,6 +367,27 @@ impl CruxTerminal {
     /// Returns `None` if the shell has not yet reported a CWD.
     pub fn cwd(&self) -> Option<&str> {
         self.cwd.as_deref()
+    }
+
+    /// Get all completed semantic zones from OSC 133 shell integration.
+    pub fn semantic_zones(&self) -> &[SemanticZone] {
+        &self.semantic_zones
+    }
+
+    /// Get the line number of the most recent prompt start.
+    ///
+    /// Scans completed zones in reverse for the last `Prompt` zone.
+    /// Returns `None` if no prompt has been marked yet.
+    pub fn last_prompt_line(&self) -> Option<i32> {
+        // Check both completed zones and the currently-open zone.
+        if self.current_zone_type == Some(SemanticZoneType::Prompt) {
+            return Some(self.current_zone_start_line);
+        }
+        self.semantic_zones
+            .iter()
+            .rev()
+            .find(|z| z.zone_type == SemanticZoneType::Prompt)
+            .map(|z| z.start_line)
     }
 
     /// Get the current terminal size.
