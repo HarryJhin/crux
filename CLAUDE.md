@@ -35,6 +35,8 @@ crux-app  (main: window management, GPUI bootstrap, DockArea)
 
 crux-ipc        (Unix socket server, JSON-RPC 2.0 — depends on crux-protocol)
 crux-clipboard  (NSPasteboard, drag-and-drop — depends on crux-protocol)
+crux-mcp        (MCP server, 30 tools, rmcp SDK — depends on crux-protocol) [planned]
+crux-mcp-bridge (stdio ↔ Unix socket bridge for Claude Desktop) [planned]
 ```
 
 All crates live under `crates/`. The root `Cargo.toml` is workspace-only.

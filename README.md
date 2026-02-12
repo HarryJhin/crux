@@ -8,7 +8,7 @@ A GPU-accelerated terminal emulator for macOS, built with Rust and Metal. The fi
 
 ## Why Crux?
 
-No existing terminal satisfies all three requirements simultaneously:
+No existing terminal satisfies all of these requirements simultaneously:
 
 | Requirement | Warp | Ghostty | WezTerm | iTerm2 | **Crux** |
 |-------------|------|---------|---------|--------|----------|
@@ -184,7 +184,7 @@ flowchart LR
 |-----------|-------------------|---------|---------|
 | UI Framework | `gpui` | 0.2.2 | Metal GPU rendering, Flexbox layout, event system |
 | UI Components | `gpui-component` | 0.5.1 | DockArea, Tabs, Resizable panels, 60+ widgets |
-| VT Parser | `alacritty_terminal` | 0.25.1 | Terminal emulation, grid, search, selection, damage tracking |
+| VT Parser | `alacritty_terminal` | 0.25 | Terminal emulation, grid, search, selection, damage tracking |
 | PTY | `portable-pty` | 0.9.0 | PTY creation, resize, process management |
 | macOS Bindings | `objc2` + `objc2-app-kit` | latest | NSTextInputClient, NSPasteboard, NSDragging |
 | MCP SDK | `rmcp` | 0.15.0 | Native MCP server (Model Context Protocol) |
@@ -201,7 +201,7 @@ flowchart LR
 
 | Variable | Description |
 |----------|-------------|
-| `TERM` | `xterm-256color` |
+| `TERM` | `xterm-crux` (fallback: `xterm-256color`) |
 | `COLORTERM` | `truecolor` |
 | `TERM_PROGRAM` | `Crux` |
 | `TERM_PROGRAM_VERSION` | Current version |
@@ -327,8 +327,8 @@ crux/
 │   ├── crux-terminal/      # Terminal entity, VT integration, PTY
 │   ├── crux-terminal-view/ # GPUI rendering, IME overlay, selection
 │   ├── crux-ipc/           # Unix socket server, JSON-RPC, CLI client
-│   ├── crux-mcp/           # Native MCP server (30 tools, rmcp SDK)
-│   ├── crux-mcp-bridge/    # stdio ↔ Unix socket bridge for Claude Desktop
+│   ├── crux-mcp/           # Native MCP server (30 tools, rmcp SDK) [planned]
+│   ├── crux-mcp-bridge/    # stdio ↔ Unix socket bridge for Claude Desktop [planned]
 │   ├── crux-clipboard/     # Rich clipboard, drag & drop
 │   └── crux-protocol/      # Protocol types, Crux Protocol definitions
 ├── research/               # Technical research documents
@@ -367,19 +367,21 @@ flowchart BT
 
 ## Research
 
-Detailed technical research is available in the `research/` directory:
+Extensive technical research (~780KB, 28 documents) is available in [`research/`](research/README.md):
 
-- [GPUI Framework Research](research/gpui-research.md) — rendering pipeline, components, IME support
-- [Terminal Core Research](research/terminal-core-research.md) — VT parsers, PTY, graphics protocols, tmux, Unicode
-- [IME & Clipboard Research](research/ime-clipboard-research.md) — NSTextInputClient, Hangul composition, failure analysis
-- [IPC & Agent Teams Research](research/ipc-agent-teams-research.md) — WezTerm CLI, Claude Code integration, Crux Protocol
-- [MCP Integration Strategy](research/integration/mcp-integration.md) — Protocol, Rust SDK, 30 tools design, architecture
+| Area | Key Documents |
+|------|--------------|
+| **GPUI Framework** | [framework.md](research/gpui/framework.md), [terminal-implementations.md](research/gpui/terminal-implementations.md), [bootstrap.md](research/gpui/bootstrap.md), [widgets-integration.md](research/gpui/widgets-integration.md) |
+| **Terminal Core** | [terminal-emulation.md](research/core/terminal-emulation.md), [terminal-architecture.md](research/core/terminal-architecture.md), [keymapping.md](research/core/keymapping.md), [terminfo.md](research/core/terminfo.md) |
+| **Integration** | [ipc-protocol-design.md](research/integration/ipc-protocol-design.md), [claude-code-strategy.md](research/integration/claude-code-strategy.md), [mcp-integration.md](research/integration/mcp-integration.md) |
+| **Platform** | [ime-clipboard.md](research/platform/ime-clipboard.md), [homebrew-distribution.md](research/platform/homebrew-distribution.md), [vim-ime-switching.md](research/platform/vim-ime-switching.md) |
+| **Competitive** | [ghostty-warp-analysis.md](research/competitive/ghostty-warp-analysis.md), [terminal-structures.md](research/competitive/terminal-structures.md) |
 
 ---
 
 ## License
 
-TBD
+Dual-licensed under [MIT](LICENSE-MIT) and [Apache 2.0](LICENSE-APACHE). You may choose either license.
 
 ---
 
