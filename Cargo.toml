@@ -35,7 +35,7 @@ alacritty_terminal = "0.25"
 portable-pty = "0.9"
 
 # MCP
-rmcp = { version = "0.15", features = ["server", "macros", "transport-io"] }
+rmcp = { version = "0.15", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "0.8"
 
 # Utilities

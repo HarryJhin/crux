@@ -2,6 +2,9 @@ use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::*;
+use rmcp::service::RequestContext;
+use rmcp::ErrorData as McpError;
+use rmcp::RoleServer;
 use rmcp::{tool_handler, ServerHandler};
 
 use crate::ipc_client::IpcClient;
@@ -21,6 +24,14 @@ impl CruxMcpServer {
             + crate::tools::content::router();
         Self { ipc, tool_router }
     }
+
+    pub fn new_from_arc(ipc: Arc<IpcClient>) -> Self {
+        let tool_router = crate::tools::pane::router()
+            + crate::tools::command::router()
+            + crate::tools::state::router()
+            + crate::tools::content::router();
+        Self { ipc, tool_router }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -32,7 +43,10 @@ impl ServerHandler for CruxMcpServer {
                  Control terminal panes, execute commands, and inspect state."
                     .into(),
             ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
             server_info: Implementation {
                 name: "crux-mcp".into(),
                 title: None,
@@ -43,5 +57,42 @@ impl ServerHandler for CruxMcpServer {
             },
             ..Default::default()
         }
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult {
+            resource_templates: crate::resources::resource_templates(),
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        let uri = &request.uri;
+        let (pane_id, resource_type) =
+            crate::resources::parse_resource_uri(uri).ok_or_else(|| {
+                McpError::invalid_params(format!("invalid resource URI: {uri}"), None)
+            })?;
+
+        let ipc = self.ipc.clone();
+        let resource_type = resource_type.to_string();
+        let contents = tokio::task::spawn_blocking(move || {
+            crate::resources::read_resource_data(&ipc, pane_id, &resource_type)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
+        .map_err(|e| McpError::internal_error(e, None))?;
+
+        Ok(ReadResourceResult {
+            contents: vec![contents],
+        })
     }
 }

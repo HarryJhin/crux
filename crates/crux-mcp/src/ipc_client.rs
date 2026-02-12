@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use crux_protocol::{decode_frame, encode_frame, JsonRpcRequest, JsonRpcResponse};
@@ -24,6 +25,29 @@ impl IpcClient {
             stream: Mutex::new(stream),
             next_id: Mutex::new(1),
         })
+    }
+
+    /// Connect with exponential backoff retry.
+    pub fn connect_with_retry(max_attempts: u32) -> Result<Self> {
+        let mut delay = Duration::from_millis(100);
+        for attempt in 1..=max_attempts {
+            match Self::connect() {
+                Ok(client) => return Ok(client),
+                Err(e) if attempt == max_attempts => return Err(e),
+                Err(e) => {
+                    log::info!(
+                        "IPC connect attempt {}/{}: {}, retrying in {:?}",
+                        attempt,
+                        max_attempts,
+                        e,
+                        delay
+                    );
+                    std::thread::sleep(delay);
+                    delay = std::cmp::min(delay * 2, Duration::from_secs(5));
+                }
+            }
+        }
+        unreachable!()
     }
 
     /// Send a JSON-RPC request and wait for the response.
