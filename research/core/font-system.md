@@ -1,6 +1,6 @@
 ---
 title: "Font Discovery and CJK Fallback"
-description: "Core Text API for font discovery, CJK fallback chains, Korean-first rendering, GPUI font handling, ligature support, variable fonts, box drawing and block element GPU rendering"
+description: "Core Text API for font discovery, CJK fallback chains, Korean-first rendering, GPUI font handling, ligature support, variable fonts, box drawing and block element GPU rendering, Nerd Fonts PUA, Powerline symbols, emoji rendering, texture atlas, font shaping performance"
 date: 2026-02-12
 phase: [1]
 topics: [fonts, cjk, core-text, fallback, ligatures]
@@ -28,6 +28,12 @@ related:
 7. [Variable Fonts](#7-variable-fonts)
 8. [Box Drawing and Block Elements](#8-box-drawing-and-block-elements)
 9. [Crux Implementation Recommendations](#9-crux-implementation-recommendations)
+10. [Built-in Box Drawing Implementation Patterns](#10-built-in-box-drawing-implementation-patterns)
+11. [Nerd Fonts and Private Use Area (PUA)](#11-nerd-fonts-and-private-use-area-pua)
+12. [Powerline Symbol Rendering](#12-powerline-symbol-rendering)
+13. [Emoji Rendering Details](#13-emoji-rendering-details)
+14. [GPUI Text Rendering Architecture](#14-gpui-text-rendering-architecture)
+15. [Font Shaping Performance](#15-font-shaping-performance)
 
 ---
 
@@ -639,6 +645,668 @@ font-kit = "0.14"        # Font discovery (wraps Core Text)
 
 ---
 
+## 10. Built-in Box Drawing Implementation Patterns
+
+### Production Terminal Implementations
+
+All modern GPU terminals have migrated from font-based box drawing to procedural rendering. This section documents real-world implementation patterns.
+
+#### Alacritty (commit f717710)
+
+Alacritty moved box-drawing from font rendering to built-in GPU rendering for pixel-perfect alignment.
+
+**Implementation location**: `alacritty/src/renderer/rects.rs`
+
+**Approach**: Procedural line/rect drawing
+- Light lines: 1px strokes
+- Heavy lines: 2-3px strokes
+- Double lines: Two parallel 1px strokes with gap
+- Coordinates calculated from cell boundaries
+- Rendered as GPU primitives (not textured quads)
+
+#### Ghostty (`src/font/sprite/Box.zig`)
+
+Comprehensive sprite renderer that generates pixel-perfect box-drawing characters.
+
+**Coverage**: Full U+2500-U+259F range plus legacy computing symbols (U+1FB00-U+1FBFF)
+
+**Architecture**:
+- Sprite-based rendering (pre-rasterized to texture)
+- Covers box drawing, block elements, and legacy computing
+- Pixel-perfect alignment via integer coordinate math
+- Handles all line weights (light/heavy/double)
+
+#### Kitty (commit 533688a)
+
+Added rounded corners (╭╮╯╰) via built-in rendering.
+
+**Discussion context**: Issue #7680 discusses pixel-perfect alignment challenges
+
+**Key insight**: Font-based rounded corners had inconsistent arc rendering across different fonts. Built-in rendering ensures consistent appearance.
+
+#### Adobe Reference
+
+`adobe-type-tools/box-drawing` on GitHub provides canonical reference implementation.
+
+**Purpose**: Reference for font designers, but also serves as algorithm reference for terminal authors
+
+**Coverage**: Complete U+2500-U+257F specification with mathematical definitions
+
+### Industry Consensus
+
+**ALL modern GPU terminals now render box-drawing procedurally.** Font-based rendering is considered legacy due to:
+
+1. **Alignment issues**: Font metrics cause gaps/overlaps between cells
+2. **Inconsistency**: Different fallback fonts render boxes differently
+3. **Crispness**: Anti-aliasing blurs cell boundaries
+4. **Control**: Procedural rendering allows exact pixel placement
+
+### Unicode Range Coverage Priorities
+
+| Range | Name | Built-in Priority | Phase |
+|-------|------|-------------------|-------|
+| U+2500–U+257F | Box Drawing | Must have | Phase 1 |
+| U+2580–U+259F | Block Elements | Must have | Phase 1 |
+| U+E0B0–U+E0B3 | Powerline | Should have | Phase 2 |
+| U+1FB00–U+1FBFF | Legacy Computing | Nice to have | Phase 4 |
+| U+2800–U+28FF | Braille Patterns | Nice to have | Phase 4 |
+
+**Recommendation for Crux**:
+- Phase 1: U+2500–U+257F (box drawing) + U+2580–U+259F (block elements)
+- Phase 2: U+E0B0–U+E0B3 (Powerline arrows) — see §12
+- Phase 4: U+1FB00–U+1FBFF (legacy computing), U+2800–U+28FF (Braille)
+
+### Implementation Pattern
+
+```rust
+fn is_builtin_glyph(c: char) -> bool {
+    matches!(c,
+        '\u{2500}'..='\u{257F}' |  // Box Drawing
+        '\u{2580}'..='\u{259F}' |  // Block Elements
+        '\u{E0B0}'..='\u{E0B3}'    // Powerline (Phase 2)
+    )
+}
+
+fn render_builtin_glyph(
+    c: char,
+    cell: Bounds<Pixels>,
+    line_width: Pixels,
+    color: Color,
+) -> Vec<Primitive> {
+    match c {
+        '\u{2500}'..='\u{257F}' => render_box_drawing(c, cell, line_width, color),
+        '\u{2580}'..='\u{259F}' => render_block_element(c, cell, color),
+        '\u{E0B0}'..='\u{E0B3}' => render_powerline(c, cell, color),
+        _ => vec![],
+    }
+}
+```
+
+---
+
+## 11. Nerd Fonts and Private Use Area (PUA)
+
+### Nerd Fonts Overview
+
+Nerd Fonts patch popular programming fonts with thousands of glyphs (icons, ligatures, symbols) using the Unicode Private Use Area (U+E000–U+F8FF, U+F0000–U+10FFFF).
+
+**Three variants** (as of Nerd Fonts v3):
+1. **Nerd Font Mono (NFM)**: Single-width glyphs (1 cell) — terminal-safe
+2. **Nerd Font (NF)**: Double-width glyphs (~1.5–2 cells) — GUI editors
+3. **Nerd Font Propo**: Proportional width — documents/web
+
+### The wcwidth() Problem
+
+The `wcwidth()` function (and Rust's `unicode-width` crate) returns width for Unicode characters:
+- **Standard characters**: Returns 1 (narrow) or 2 (wide)
+- **PUA codepoints**: Returns **-1** (undefined) or **1** (fallback)
+
+However, **Nerd Font (NF) variant renders PUA as ~1.5–2 cells wide**, causing misalignment.
+
+#### Terminal Handling Strategies
+
+| Terminal | PUA Width Default | Configurable | Notes |
+|----------|-------------------|--------------|-------|
+| Kitty | 1 cell, with exceptions | Yes | Issue #1029: Treats PUA+space as 2 cells |
+| URxvt | Requires NFM variant | No | Crashes on double-width PUA |
+| WezTerm | 1 cell | Yes | `unicode_width` config override |
+| iTerm2 | 1 cell | No | Strict wcwidth() adherence |
+| Alacritty | 1 cell | No | Strict wcwidth() adherence |
+
+**Kitty's exception** (issue #1029): If a PUA codepoint is followed by a space, treat it as 2 cells. This heuristic handles some Nerd Font icons correctly but is not foolproof.
+
+### Nerd Fonts v3 Changes
+
+Nerd Fonts v3 (2023) clarified the three variants:
+- **NFM**: Explicitly single-width, safe for terminals
+- **NF**: Explicitly double-width, for GUI
+- **Propo**: Explicitly proportional, for documents
+
+Before v3, all variants were ambiguous, causing widespread terminal issues.
+
+### wcwidth-icons Workaround
+
+The `wcwidth-icons` project provides an `LD_PRELOAD` library that overrides `wcwidth()` to return 2 for specific PUA ranges.
+
+**Not applicable to Crux**: Rust native code doesn't use libc `wcwidth()`. This is a workaround for C-based terminals and shell utilities.
+
+### Recommendation for Crux
+
+**Default behavior**: Treat PUA codepoints as **single-width (1 cell)**.
+
+**Rationale**:
+- Matches `wcwidth()` behavior
+- Compatible with Nerd Font Mono (NFM) variant
+- Avoids misalignment in `ls` output, prompts, etc.
+
+**Future enhancement** (Phase 3+): Add configurable PUA width override
+
+```toml
+[font.pua_width]
+# Override specific PUA ranges to 2 cells
+ranges = [
+    { start = 0xE0A0, end = 0xE0A3, width = 2 },  # Powerline branch/LN/lock/flag
+]
+```
+
+**User guidance**: Recommend **Nerd Font Mono** variant in documentation.
+
+---
+
+## 12. Powerline Symbol Rendering
+
+### Powerline Symbols
+
+Powerline is a popular shell prompt/statusline framework that uses triangular arrow symbols for segment separation:
+
+| Codepoint | Glyph | Name |
+|-----------|-------|------|
+| U+E0B0 | `` | Right-pointing triangle (solid) |
+| U+E0B1 | `` | Right-pointing triangle (outline) |
+| U+E0B2 | `` | Left-pointing triangle (solid) |
+| U+E0B3 | `` | Left-pointing triangle (outline) |
+
+**Visual requirement**: Arrows must **fill the entire cell boundary** with no gaps or overlaps.
+
+### Root Causes of Gaps
+
+When rendered via fonts, Powerline symbols often show visible gaps between segments:
+
+1. **ClearType vs grayscale anti-aliasing**: ClearType (subpixel AA) causes color fringing at cell boundaries
+2. **Font bounding box clipping**: Font's glyph bounding box doesn't extend to cell edges
+3. **Height alignment**: Vertical centering causes gaps at top/bottom
+4. **Sub-pixel positioning**: Fractional coordinates cause edge blur
+
+### Production Solutions
+
+#### Microsoft Terminal (issue #7260)
+
+**Problem**: ClearType anti-aliasing caused color fringing on Powerline arrows
+
+**Solution**: Switch from ClearType to **grayscale anti-aliasing** for custom glyphs
+
+**Result**: Clean edges, no color fringing
+
+#### VS Code (issue #128917)
+
+**Problem**: Font-rendered Powerline had persistent gaps
+
+**Solution**: Custom glyph rendering system that bypasses the font entirely
+
+**Implementation**: Canvas API renders triangles procedurally
+
+#### iTerm2
+
+**Built-in Powerline renderer**: Preferences → Text → "Use built-in Powerline glyphs"
+
+**Behavior**: When enabled, U+E0B0–U+E0B3 are rendered as GPU triangles instead of font glyphs
+
+**Result**: Pixel-perfect alignment, no gaps
+
+### Recommendation for Crux
+
+**Phase 2**: Render U+E0B0–U+E0B3 procedurally (like box drawing)
+
+**Implementation approach**:
+1. Detect Powerline codepoints in `is_builtin_glyph()`
+2. Render as filled triangles using Metal/GPUI primitives
+3. Ensure triangle vertices exactly align with cell boundaries
+4. Use **grayscale anti-aliasing** (not ClearType/subpixel)
+
+```rust
+fn render_powerline(c: char, cell: Bounds<Pixels>, color: Color) -> Vec<Primitive> {
+    let (x, y, w, h) = (cell.origin.x, cell.origin.y, cell.size.width, cell.size.height);
+
+    match c {
+        '\u{E0B0}' => {
+            // Right-pointing solid triangle
+            // Vertices: top-left, bottom-left, middle-right
+            vec![Triangle {
+                points: [(x, y), (x, y + h), (x + w, y + h/2.0)],
+                color,
+            }]
+        },
+        '\u{E0B1}' => {
+            // Right-pointing outline triangle
+            vec![TriangleOutline {
+                points: [(x, y), (x, y + h), (x + w, y + h/2.0)],
+                stroke_width: Pixels(1.0),
+                color,
+            }]
+        },
+        '\u{E0B2}' => {
+            // Left-pointing solid triangle
+            vec![Triangle {
+                points: [(x + w, y), (x + w, y + h), (x, y + h/2.0)],
+                color,
+            }]
+        },
+        '\u{E0B3}' => {
+            // Left-pointing outline triangle
+            vec![TriangleOutline {
+                points: [(x + w, y), (x + w, y + h), (x, y + h/2.0)],
+                stroke_width: Pixels(1.0),
+                color,
+            }]
+        },
+        _ => vec![],
+    }
+}
+```
+
+**Anti-aliasing**: Use grayscale (not subpixel). On macOS, this is the default post-10.15.
+
+---
+
+## 13. Emoji Rendering Details
+
+### Variation Selectors
+
+Unicode provides two variation selectors for controlling emoji rendering:
+
+| Selector | Codepoint | Effect | Width |
+|----------|-----------|--------|-------|
+| VS-15 | U+FE0E | Text presentation (monochrome) | 1 cell |
+| VS-16 | U+FE0F | Emoji presentation (color) | 2 cells |
+
+**Example**:
+- `☺` (U+263A) alone → implementation-dependent
+- `☺︎` (U+263A U+FE0E) → text, 1 cell, monochrome
+- `☺️` (U+263A U+FE0F) → emoji, 2 cells, color
+
+**Terminal behavior**: Must track variation selectors to determine cell width.
+
+### ZWJ (Zero-Width Joiner) Sequences
+
+U+200D (ZWJ) combines multiple emoji into a single **grapheme cluster**.
+
+**Example**: 👨‍👩‍👧‍👦 (family)
+- Codepoints: U+1F468 U+200D U+1F469 U+200D U+1F467 U+200D U+1F466 (7 codepoints)
+- Rendered as: Single glyph
+- Width: **2 cells** (not 14!)
+
+**Terminal requirement**:
+1. Detect ZWJ sequences using Unicode segmentation
+2. Treat entire cluster as single grapheme
+3. Assign width based on first emoji (usually 2 cells)
+
+```rust
+use unicode_segmentation::UnicodeSegmentation;
+
+fn grapheme_width(s: &str) -> usize {
+    let graphemes = s.graphemes(true);
+    graphemes.map(|g| {
+        // For ZWJ sequences, width of first character
+        let first_char = g.chars().next().unwrap();
+        first_char.width().unwrap_or(1)
+    }).sum()
+}
+```
+
+### Apple Color Emoji Format
+
+macOS ships with **Apple Color Emoji** font in **CBDT/CBLC** format (embedded PNG bitmaps).
+
+**Critical requirement**: Must use **Core Text**, not Core Graphics
+
+- **Core Text**: Handles CBDT/CBLC correctly, renders color emoji
+- **Core Graphics**: Only renders outlines, emoji appear as missing glyphs
+
+**GPUI implication**: GPUI uses Core Text on macOS, so color emoji work automatically via the text system.
+
+### Terminal Emoji Support Inconsistencies
+
+| Terminal | Unicode Version | ZWJ Support | Variation Selector | Notes |
+|----------|----------------|-------------|-------------------|-------|
+| Konsole | 15.0 | Full | Yes | Best support |
+| iTerm2 | 15.0 | Full | Yes | Uses Core Text |
+| Kitty | 15.0 | Full | Yes | Custom emoji renderer |
+| VS Code | 12.1.0 | Limited | Partial | Outdated Unicode data |
+| Hyper | 12.1.0 | Limited | Partial | Electron limitation |
+
+**Kitty's approach**: Custom emoji data file (`unicode_names.txt`) updated with each Unicode release.
+
+### Testing Tool
+
+**ucs-detect** (https://ucs-detect.readthedocs.io/): Command-line tool for validating Unicode support
+
+```bash
+pip install ucs-detect
+ucs-detect --unicode-version 15.0
+```
+
+Generates visual test cases for:
+- Emoji sequences
+- ZWJ families
+- Variation selectors
+- Skin tone modifiers (U+1F3FB–U+1F3FF)
+- Country flags (regional indicators)
+
+### Recommendation for Crux
+
+**Phase 1**: Basic emoji via Core Text fallback
+1. Add "Apple Color Emoji" to fallback chain
+2. Use `unicode-segmentation` crate for grapheme clustering
+3. Track variation selectors for width calculation
+
+**Phase 3**: Enhanced emoji support
+1. Update to Unicode 15.0+ (or latest stable)
+2. Test ZWJ sequences with `ucs-detect`
+3. Handle skin tone modifiers correctly
+4. Support regional indicator pairs (flag emoji)
+
+```rust
+use unicode_segmentation::UnicodeSegmentation;
+
+fn emoji_width(cluster: &str) -> usize {
+    // Check for variation selector
+    if cluster.contains('\u{FE0E}') {
+        return 1;  // Text presentation
+    }
+    if cluster.contains('\u{FE0F}') {
+        return 2;  // Emoji presentation
+    }
+
+    // Default: first character determines width
+    cluster.chars().next()
+        .and_then(|c| c.width())
+        .unwrap_or(1)
+}
+```
+
+---
+
+## 14. GPUI Text Rendering Architecture
+
+### Zed's GPU Text Rendering Approach
+
+From the Zed blog post "Leveraging Rust and the GPU to render user interfaces at 120 FPS":
+
+**Pipeline**:
+1. **OS handles font rasterization** → High-quality platform-native glyphs
+2. **Texture atlas caching on GPU** → Rasterize once, reuse many times
+3. **Parallel assembly** → Multiple text runs rendered in parallel
+
+**Text shaping**: Uses **Core Text** on macOS for native consistency
+- Handles ligatures, combining marks, BiDi, complex scripts
+- Platform-native rendering matches system appearance
+
+**Cache key**: `(font_id, glyph_id, font_size)`
+- Invariant: Same glyph at same size always produces same texture
+- LRU eviction when atlas fills
+
+### cosmic-text: Pure Rust Alternative
+
+**pop-os/cosmic-text**: Full-featured text engine in pure Rust
+
+**Features**:
+- **rustybuzz**: HarfBuzz port for text shaping
+- **Font fallback**: Automatic fallback chain
+- **Color emoji**: CBDT/CBLC support
+- **BiDi**: Unicode bidirectional algorithm
+- **Ligatures**: OpenType GSUB tables
+
+**Core API**:
+```rust
+use cosmic_text::{FontSystem, SwashCache, Buffer, Attrs};
+
+let mut font_system = FontSystem::new();
+let mut cache = SwashCache::new();
+let mut buffer = Buffer::new(&mut font_system, Metrics::new(14.0, 16.0));
+
+buffer.set_text("Hello, world!", Attrs::new());
+buffer.shape_until_scroll();
+
+for run in buffer.layout_runs() {
+    for glyph in run.glyphs {
+        let image = cache.get_image(&font_system, glyph.cache_key);
+        // Render glyph image to screen
+    }
+}
+```
+
+**GPUI compatibility issue**: Zed issue #30526 reports version incompatibility
+- GPUI uses older cosmic-text version
+- API breaking changes between cosmic-text releases
+- Direct integration requires version alignment
+
+### Metal Texture Atlas
+
+**Strategy**: Rasterize glyphs once → store in GPU texture → fast GPU copy to output
+
+**Structure**:
+- 2D texture array (multiple "pages" for large glyph sets)
+- Bin-packing algorithm for atlas placement (e.g., rectpack2D, guillotiere)
+- LRU eviction when atlas is full
+
+**Cache invalidation triggers**:
+- Font size change
+- Font weight change (bold/italic)
+- New font loaded
+- Window DPI change
+
+**Performance**: Texture atlas avoids re-rasterizing glyphs every frame
+- Rasterization: ~1-5ms per glyph (expensive)
+- Texture lookup: ~0.001ms per glyph (fast)
+
+### Ghostty's Approach
+
+From Ghostty source code and Mitchell Hashimoto's devlogs:
+
+**Platform**: Metal on macOS
+- Custom Metal shaders for cell rendering
+- Sprite renderer for box drawing (see §10)
+- Standard texture atlas for text
+
+**Font system**: Core Text for macOS consistency
+
+**Performance optimization**: Damage tracking from alacritty_terminal
+- Only re-render changed cells
+- Atlas lookup for unchanged cells
+
+### Anti-aliasing on macOS
+
+**Subpixel AA removed in macOS 10.15**: Apple deprecated ClearType-style subpixel anti-aliasing
+
+**Modern standard**: **Grayscale anti-aliasing**
+- Better for Retina displays (high DPI)
+- No color fringing
+- Simpler rendering pipeline
+
+**Kitty's approach** (issue #214):
+- sRGB linear gamma blending for correct anti-aliasing
+- Avoids "dark halo" around light-on-dark text
+
+```rust
+// Pseudo-code for correct blending
+fn blend_glyph(glyph_alpha: f32, fg: Color, bg: Color) -> Color {
+    // Convert sRGB to linear
+    let fg_linear = srgb_to_linear(fg);
+    let bg_linear = srgb_to_linear(bg);
+
+    // Alpha blend in linear space
+    let blended = fg_linear * glyph_alpha + bg_linear * (1.0 - glyph_alpha);
+
+    // Convert back to sRGB
+    linear_to_srgb(blended)
+}
+```
+
+### Recommended Path for Crux
+
+**Phase 1**: Start with GPUI text system
+- GPUI provides Core Text backend on macOS
+- Automatic texture atlas management
+- Platform-native text rendering
+
+**Phase 1+**: Add built-in rendering for special glyphs
+- Box drawing (U+2500–U+257F)
+- Block elements (U+2580–U+259F)
+- Bypass text system for these ranges
+
+**Phase 2**: Add Powerline symbols (U+E0B0–U+E0B3)
+
+**Phase 3**: CJK/emoji fallback optimization
+- Explicit fallback chain configuration
+- Korean-first priority (see §3)
+
+**Phase 4+**: Defer ligatures to later phase
+- High performance cost (see §15)
+- Ligatures disabled by default
+
+---
+
+## 15. Font Shaping Performance
+
+### WezTerm HarfBuzz Performance Issue
+
+**WezTerm issue #5280**: Performance regression with ligature fonts
+
+**Profiling results**:
+- With ligature font (Fira Code): **49.8–85.5% CPU** in `HarfbuzzShaper::do_shape`
+- Without ligatures (JetBrains Mono, ligatures disabled): **24.1% CPU**
+- **2–3.5x performance penalty** for ligature support
+
+**Root cause**: HarfBuzz text shaping is computationally expensive
+- Analyzes OpenType GSUB tables
+- Performs glyph substitution for ligatures
+- Must re-run on every text change
+
+### Alacritty's Position on Ligatures
+
+**Alacritty issue #50** (locked, definitive):
+
+> "Ligatures are not worth dropping a single frame for."
+
+**Rationale**:
+- Alacritty targets 60+ FPS on all hardware
+- Ligature shaping adds 10–20ms per frame on complex text
+- Terminal responsiveness > aesthetic features
+- **Explicitly refused** to implement ligatures
+
+### Ghostty's Trade-off
+
+Ghostty **accepts the HarfBuzz cost** for feature completeness:
+- Provides `font-feature` config for OpenType features
+- Defaults to ligatures **disabled**
+- Users opt-in by enabling `calt`, `liga`, `dlig` features
+
+**Ghostty's `font-shaper-run-breaking`**: Breaks shaping at cursor position
+- Prevents ligatures from spanning cursor
+- Improves editing clarity (e.g., `fi` ligature split by cursor)
+
+### Ligature Limitation: Color Split
+
+Syntax highlighting breaks ligatures when operators have different colors.
+
+**Example**: `>=` in code
+- `>` may be highlighted as operator (orange)
+- `=` may be highlighted as operator (orange) or part of `=>` (blue)
+- Color change **forces separate rendering runs**
+- Ligature cannot form across runs
+
+**Result**: Ligatures work in plain text (logs, prose) but break in syntax-highlighted code (editors, `bat`, `delta`).
+
+### Caching Strategy
+
+**Cache key**: `(text, font, features, size)` → shaped glyphs
+
+**Recomputation triggers**:
+- Text content changes
+- Font size changes
+- Cursor position changes (if shaper-run-breaking enabled)
+- Color changes (forces separate runs)
+
+**Optimization**: Shape only visible lines
+- Don't shape off-screen buffer content
+- Re-shape on scroll (amortize over frames)
+
+```rust
+struct ShapedLineCache {
+    cache: HashMap<(String, FontId, Pixels), ShapedLine>,
+    max_entries: usize,
+}
+
+impl ShapedLineCache {
+    fn get_or_shape(&mut self, text: &str, font: FontId, size: Pixels) -> &ShapedLine {
+        let key = (text.to_string(), font, size);
+        self.cache.entry(key).or_insert_with(|| {
+            // Expensive: call HarfBuzz
+            shape_text(text, font, size)
+        })
+    }
+}
+```
+
+### Break Shaping Runs at Cursor
+
+**Ghostty's approach**: `font-shaper-run-breaking` option
+
+**Behavior**: Split text into separate shaping runs at:
+- Cursor position
+- Selection boundaries
+- Color change boundaries
+
+**Benefits**:
+- Clearer editing (ligature doesn't obscure cursor)
+- Faster shaping (shorter runs)
+
+**Cost**: Ligatures break at cursor
+
+```rust
+fn shape_line_with_cursor(
+    text: &str,
+    cursor_col: usize,
+    font: FontId,
+    size: Pixels,
+) -> Vec<ShapedRun> {
+    let (before, after) = text.split_at(cursor_col);
+    vec![
+        shape_text(before, font, size),
+        shape_text(after, font, size),
+    ]
+}
+```
+
+### Recommendation for Crux
+
+**Phase 1**: No ligature support
+- Keep rendering pipeline simple
+- Avoid HarfBuzz performance cost
+- Character-by-character rendering
+
+**Phase 4+**: Optional ligature support (disabled by default)
+- Add HarfBuzz shaping via GPUI (which already has it)
+- Config: `font.ligatures = false` (default)
+- When enabled: Use GPUI's layout_line (which calls Core Text)
+- Break runs at cursor position for editing clarity
+
+**Performance target**: 60 FPS on 4K displays
+- Ligature shaping must not drop frames
+- Profile on older hardware (e.g., 2019 MacBook Pro)
+
+---
+
 ## Sources
 
 - [Core Text Programming Guide](https://developer.apple.com/library/archive/documentation/StringsTextFonts/Conceptual/CoreText_Programming/Overview/Overview.html) — Apple official docs
@@ -646,6 +1314,27 @@ font-kit = "0.14"        # Font discovery (wraps Core Text)
 - [UAX #11: East Asian Width](https://www.unicode.org/reports/tr11/) — Unicode standard for character width
 - [font-kit crate](https://docs.rs/font-kit/latest/font_kit/) — Cross-platform font discovery
 - [Ghostty Font Rendering](https://mitchellh.com/writing/ghostty-devlog-003) — Mitchell Hashimoto's devlog on `ic` metric discovery
-- [Alacritty Box Drawing](https://github.com/alacritty/alacritty/blob/master/alacritty/src/renderer/rects.rs) — Procedural box drawing implementation
+- [Ghostty Box Drawing Sprite Renderer](https://github.com/ghostty-org/ghostty/blob/main/src/font/sprite/Box.zig) — Comprehensive built-in box drawing implementation
+- [Alacritty Box Drawing](https://github.com/alacritty/alacritty/blob/master/alacritty/src/renderer/rects.rs) — Procedural box drawing implementation (commit f717710)
+- [Kitty Box Drawing Discussions](https://github.com/kovidgoyal/kitty/issues/7680) — Rounded corner implementation (commit 533688a)
+- [Kitty Subpixel Anti-aliasing](https://github.com/kovidgoyal/kitty/issues/214) — sRGB linear gamma blending
+- [Adobe Box Drawing Reference](https://github.com/adobe-type-tools/box-drawing) — Canonical reference implementation
 - [unicode-width crate](https://docs.rs/unicode-width/latest/unicode_width/) — UAX #11 implementation
+- [unicode-segmentation crate](https://docs.rs/unicode-segmentation/latest/unicode_segmentation/) — Grapheme cluster segmentation
 - [OpenType Variable Fonts](https://learn.microsoft.com/en-us/typography/opentype/spec/otvaroverview) — Variable font specification
+- [Nerd Fonts Wiki](https://github.com/ryanoasis/nerd-fonts/wiki) — PUA glyph documentation
+- [Nerd Fonts v3 Release](https://github.com/ryanoasis/nerd-fonts/discussions/1074) — NFM/NF/Propo variant clarification
+- [Kitty PUA Width Handling](https://github.com/kovidgoyal/kitty/issues/1029) — PUA followed by space heuristic
+- [Microsoft Terminal Powerline ClearType Issue](https://github.com/microsoft/terminal/issues/7260) — Grayscale vs subpixel anti-aliasing
+- [Microsoft Terminal Powerline Gaps](https://github.com/microsoft/terminal/issues/13029) — Additional Powerline rendering challenges
+- [VS Code Powerline Rendering](https://github.com/microsoft/vscode/issues/128917) — Custom glyph rendering system
+- [ucs-detect Documentation](https://ucs-detect.readthedocs.io/) — Unicode support validation tool
+- [Zed GPU Rendering Blog Post](https://zed.dev/blog/leveraging-rust-and-the-gpu) — "Leveraging Rust and the GPU to render user interfaces at 120 FPS"
+- [cosmic-text GitHub](https://github.com/pop-os/cosmic-text) — Pure Rust text shaping engine
+- [cosmic-text GPUI Compatibility](https://github.com/zed-industries/zed/issues/30526) — Version incompatibility issue
+- [Warp Text Rendering Blog](https://www.warp.dev/blog/how-warp-works) — GPU terminal text rendering architecture
+- [Jeff Quast Terminal Battle Royale](https://github.com/jquast/terminal-battle-royale) — Comprehensive Unicode terminal testing
+- [macOS Font Rendering](https://skip.house/blog/mac-font-rendering/) — Modern anti-aliasing on macOS
+- [WezTerm HarfBuzz Performance](https://github.com/wez/wezterm/issues/5280) — Ligature shaping performance analysis
+- [Alacritty Ligatures Issue](https://github.com/alacritty/alacritty/issues/50) — "Not worth dropping a single frame for" (locked)
+- [Ghostty Font Features Documentation](https://ghostty.org/docs/config/reference#font-feature) — OpenType feature configuration

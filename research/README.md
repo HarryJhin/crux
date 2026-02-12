@@ -1,6 +1,6 @@
 # Research Documentation Index
 
-> Crux 터미널 에뮬레이터 개발을 위한 기술 조사 문서 모음 (총 29편, ~810KB)
+> Crux 터미널 에뮬레이터 개발을 위한 기술 조사 문서 모음 (총 32편, ~870KB)
 >
 > 모든 문서는 YAML frontmatter를 포함하며, `phase`, `topics`, `related` 필드로 탐색 가능합니다.
 
@@ -25,6 +25,9 @@ research/
 │   ├── performance.md            성능: 지연시간, 처리량, 120fps, 메모리
 │   ├── hyperlinks.md             하이퍼링크: OSC 8, URL 탐지, 보안
 │   ├── mouse-reporting.md        마우스: 트래킹 모드, SGR 인코딩
+│   ├── security.md                  ★ 보안: 이스케이프 시퀀스 인젝션, CVE, OSC 52, 방어 아키텍처
+│   ├── terminal-resize-reflow.md    ★ 리사이즈: 리플로우, 저장 커서 추적, 크로스터미널 비교
+│   ├── terminal-fundamentals-verification.md  ★ 검증: 14개 문서 갭 분석, 테스트 체크리스트
 │   ├── graphics-protocols.md     ★ 그래픽스: Kitty/iTerm2/Sixel 프로토콜, Ghostty 구현
 │   └── tmux-compatibility.md     ★ tmux: VT 호환 매트릭스, Control Mode, DECLRMM
 ├── gpui/                     ← GPUI 프레임워크
@@ -74,6 +77,9 @@ research/
 | [core/font-system.md](core/font-system.md) | Core Text, CJK 폴백 체인, 리거처, 박스 드로잉 |
 | [core/performance.md](core/performance.md) | 입력 지연시간, 처리량, 120fps Metal, 메모리 관리 |
 | [core/mouse-reporting.md](core/mouse-reporting.md) | 마우스 트래킹 모드, SGR 인코딩, Shift 바이패스 |
+| [core/security.md](core/security.md) | ★ 이스케이프 시퀀스 보안, CVE 분석, OSC 52, 방어 아키텍처 |
+| [core/terminal-resize-reflow.md](core/terminal-resize-reflow.md) | ★ 리사이즈 리플로우, DECSC/DECRC, 저장 커서 추적 |
+| [core/terminal-fundamentals-verification.md](core/terminal-fundamentals-verification.md) | ★ 14개 문서 갭 분석, alacritty_terminal 책임 매트릭스, 30+ 테스트 항목 |
 
 ### Phase 2: Tabs, Panes, IPC
 | Document | Key Topics |
@@ -106,11 +112,13 @@ research/
 | [integration/claude-code-strategy.md](integration/claude-code-strategy.md) | Feature Request 전략, 커뮤니티 참여 |
 | [integration/mcp-integration.md](integration/mcp-integration.md) | ★ MCP 차별화 도구 10개, 보안, 구현 로드맵 |
 | [core/config-system.md](core/config-system.md) | TOML 설정, 핫 리로드, figment, 스키마 검증 |
+| [core/security.md](core/security.md) | ★ Hardened Runtime, 공증, entitlements, FDA 경고 |
 
 ### Phase 6: Homebrew Distribution
 | Document | Key Topics |
 |----------|------------|
 | [platform/homebrew-distribution.md](platform/homebrew-distribution.md) | Formula/Cask, CI/CD, 코드 서명, 공증 |
+| [core/security.md](core/security.md) | ★ 코드 서명 entitlements, Hardened Runtime |
 
 ### Cross-Phase: Testing Infrastructure
 | Document | Key Topics |
@@ -167,6 +175,9 @@ research/
 | **경쟁 분석/포지셔닝** | [competitive/ghostty-warp-analysis.md](competitive/ghostty-warp-analysis.md) | [competitive/terminal-structures.md](competitive/terminal-structures.md) |
 | **설정 시스템 (Warp 참고)** | [competitive/warp-settings-analysis.md](competitive/warp-settings-analysis.md) | [core/config-system.md](core/config-system.md) |
 | **터미널 버그 회피** | [competitive/alacritty-known-bugs.md](competitive/alacritty-known-bugs.md) | [competitive/ghostty-known-bugs.md](competitive/ghostty-known-bugs.md), [competitive/wezterm-kitty-known-bugs.md](competitive/wezterm-kitty-known-bugs.md) |
+| **보안/이스케이프 방어** | [core/security.md](core/security.md) | [core/terminal-emulation.md](core/terminal-emulation.md), [core/hyperlinks.md](core/hyperlinks.md) |
+| **리사이즈 리플로우** | [core/terminal-resize-reflow.md](core/terminal-resize-reflow.md) | [core/terminal-architecture.md](core/terminal-architecture.md) |
+| **기존 문서 갭 분석** | [core/terminal-fundamentals-verification.md](core/terminal-fundamentals-verification.md) | 전체 core/ |
 | **누락 영역 확인** | [gap-analysis.md](gap-analysis.md) | 전체 |
 
 ---
@@ -220,6 +231,15 @@ competitive/terminal-structures ★ ──► core/terminal-architecture
 
 competitive/warp-settings-analysis ★ ──► core/config-system
 
+core/security ★             ──► core/terminal-emulation
+                            ──► core/hyperlinks
+                            ──► platform/homebrew-distribution
+
+core/terminal-resize-reflow ★ ──► core/terminal-architecture
+                              ──► core/terminal-emulation
+
+core/terminal-fundamentals-verification ★ ──► 전체 core/ 문서 검증
+
 testing/ai-agent-testing ★ ──► integration/mcp-integration
                           ──► integration/claude-code-strategy
                           ──► core/terminal-emulation
@@ -240,3 +260,6 @@ testing/ai-agent-testing ★ ──► integration/mcp-integration
 - **competitive/ 버그 조사 5편**: Alacritty, Ghostty, WezTerm/Kitty, iTerm2/Warp, Rio 및 공통 이슈. 총 300+ 버그 분석으로 Crux가 동일 실수를 반복하지 않도록 방지.
 - **gap-analysis.md**: 3차 업데이트 완료 (status: current). Critical 갭 해소율 79% (11/14).
 - **keymapping.md 보강**: §16에 Kitty Keyboard Protocol 상세 (~307줄) 추가. CSI u 포맷, 5개 Flag, 스택 메커니즘 포함.
+- **core/ 문서 3편 추가 (검증 스프린트)**: `terminal-fundamentals-verification.md`(14개 기존 문서 갭 분석, 30+ 테스트 체크리스트) → `security.md`(CVE 6건 분석, 4계층 방어 아키텍처, macOS entitlements, 1751줄) → `terminal-resize-reflow.md`(11개 터미널 비교, alacritty_terminal 저장 커서 결함 발견, 926줄).
+- **font-system.md 대폭 확장**: §10-§15 추가 (박스 드로잉 구현 패턴, Nerd Fonts PUA, Powerline, 이모지, GPUI 텍스처 아틀라스, 폰트 셰이핑 성능). 652줄 → 1340줄.
+- **core/ 문서 수**: 14개 → 17개로 확장.
