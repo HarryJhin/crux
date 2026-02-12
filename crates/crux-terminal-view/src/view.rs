@@ -1,8 +1,10 @@
 //! CruxTerminalView: GPUI View that owns a CruxTerminal and handles I/O.
 
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use gpui::*;
+use unicode_normalization::UnicodeNormalization;
 
 use crux_terminal::{
     Column, CruxTerminal, DamageState, Dimensions, Line, Point, Scroll, Selection, SelectionType,
@@ -22,6 +24,11 @@ const BELL_FLASH_DURATION: Duration = Duration::from_millis(150);
 
 /// Lines to scroll per mouse wheel tick.
 const SCROLL_LINES_PER_TICK: i32 = 3;
+
+/// Window for IME event deduplication. Identical insertText: calls within
+/// this interval are treated as duplicates (prevents the double-space bug
+/// observed in some CJK input methods).
+const IME_DEDUP_WINDOW: Duration = Duration::from_millis(10);
 
 /// GPUI View wrapping a terminal emulator with keyboard input and rendering.
 pub struct CruxTerminalView {
@@ -53,6 +60,13 @@ pub struct CruxTerminalView {
     option_as_alt: OptionAsAlt,
     /// Last reported mouse grid position, for motion event deduplication.
     last_mouse_grid: Option<Point>,
+    /// IME composition (preedit) text, displayed as overlay at cursor position.
+    /// Set by `replace_and_mark_text_in_range`, cleared on commit or `unmark_text`.
+    marked_text: Option<String>,
+    /// Selected range within composition text (UTF-16 offsets from IME).
+    marked_text_selected_range: Option<Range<usize>>,
+    /// Last IME commit for deduplication (text, timestamp). Prevents double-space bug (Alacritty #8079).
+    last_ime_commit: Option<(String, Instant)>,
 }
 
 /// Alias for GPUI's 2D point to avoid confusion with alacritty's grid Point.
@@ -134,6 +148,9 @@ impl CruxTerminalView {
             is_focused: false,
             option_as_alt: OptionAsAlt::Both,
             last_mouse_grid: None,
+            marked_text: None,
+            marked_text_selected_range: None,
+            last_ime_commit: None,
         }
     }
 
@@ -184,21 +201,30 @@ impl CruxTerminalView {
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Reset cursor blink on any key input.
         self.reset_cursor_blink();
 
+        // HARDENING 1: Modifier Key Isolation (Ghostty #4634)
+        // When composing, ignore standalone modifier keys (Ctrl, Shift, Cmd, Option alone).
+        // These must NOT destroy the preedit.
+        if self.marked_text.is_some() && Self::is_standalone_modifier(&event.keystroke) {
+            return; // Ignore modifier-only keystrokes during composition.
+        }
+
         // Handle Cmd+V for paste before forwarding to terminal.
         if event.keystroke.modifiers.platform && event.keystroke.key.as_str() == "v" {
             self.paste_from_clipboard(cx);
+            cx.stop_propagation();
             return;
         }
 
         // Handle Cmd+C for copy before forwarding to terminal.
         if event.keystroke.modifiers.platform && event.keystroke.key.as_str() == "c" {
-            self.copy_selection(window, cx);
+            self.copy_selection(_window, cx);
+            cx.stop_propagation();
             return;
         }
 
@@ -206,7 +232,25 @@ impl CruxTerminalView {
         if event.keystroke.modifiers.platform && event.keystroke.key.as_str() == "a" {
             self.select_all();
             cx.notify();
+            cx.stop_propagation();
             return;
+        }
+
+        // HARDENING 2: Event Deduplication (Alacritty #8079)
+        // If keystroke matches recent IME commit within dedup window, drop it.
+        if let Some((ref last_text, last_time)) = self.last_ime_commit {
+            if last_time.elapsed() < IME_DEDUP_WINDOW && event.keystroke.key == last_text.as_str() {
+                // This keystroke is a duplicate of the IME commit. Drop it.
+                cx.stop_propagation();
+                return;
+            }
+        }
+
+        // Character keys without special modifiers → let IME handle via
+        // replace_text_in_range(). This avoids double-processing: if we wrote
+        // to the PTY here, the IME would also write via insertText:.
+        if Self::is_ime_candidate(&event.keystroke, self.option_as_alt) {
+            return; // Don't stop propagation — let event reach IME.
         }
 
         // Get the current terminal mode for application cursor key detection.
@@ -218,8 +262,69 @@ impl CruxTerminalView {
                 term.selection = None;
             });
             self.terminal.write_to_pty(&bytes);
+            cx.stop_propagation();
             cx.notify();
         }
+    }
+
+    /// Returns true if the keystroke is a standalone modifier key (no character).
+    /// Used to prevent modifiers from destroying IME composition (Ghostty #4634).
+    fn is_standalone_modifier(keystroke: &Keystroke) -> bool {
+        matches!(
+            keystroke.key.as_str(),
+            "shift" | "control" | "alt" | "cmd" | "option" | "command"
+        )
+    }
+
+    /// Returns true if the keystroke should be handled by IME rather than directly.
+    ///
+    /// Character keys without Ctrl/Alt/Cmd/Fn modifiers go through the IME pipeline
+    /// so that composition (e.g. Korean jamo assembly) works correctly.
+    fn is_ime_candidate(keystroke: &Keystroke, option_as_alt: OptionAsAlt) -> bool {
+        if keystroke.modifiers.platform
+            || keystroke.modifiers.control
+            || keystroke.modifiers.function
+        {
+            return false;
+        }
+        // Alt+key sends ESC prefix when option_as_alt is enabled — bypass IME.
+        if keystroke.modifiers.alt {
+            match option_as_alt {
+                OptionAsAlt::None => {} // macOS special char; let IME handle.
+                _ => return false,      // Terminal Alt behavior; handle directly.
+            }
+        }
+        // Named terminal control keys produce escape sequences, not character input.
+        !matches!(
+            keystroke.key.as_str(),
+            "enter"
+                | "tab"
+                | "backspace"
+                | "escape"
+                | "space"
+                | "up"
+                | "down"
+                | "left"
+                | "right"
+                | "home"
+                | "end"
+                | "insert"
+                | "delete"
+                | "pageup"
+                | "pagedown"
+                | "f1"
+                | "f2"
+                | "f3"
+                | "f4"
+                | "f5"
+                | "f6"
+                | "f7"
+                | "f8"
+                | "f9"
+                | "f10"
+                | "f11"
+                | "f12"
+        )
     }
 
     /// Convert pixel position relative to canvas origin into terminal grid coordinates.
@@ -629,6 +734,163 @@ impl Focusable for CruxTerminalView {
     }
 }
 
+/// Convert a UTF-16 code-unit offset to a UTF-8 byte offset within `s`.
+fn utf16_offset_to_utf8(s: &str, utf16_offset: usize) -> usize {
+    let mut utf16_count = 0;
+    let mut utf8_offset = 0;
+    for ch in s.chars() {
+        if utf16_count >= utf16_offset {
+            break;
+        }
+        utf16_count += ch.len_utf16();
+        utf8_offset += ch.len_utf8();
+    }
+    utf8_offset
+}
+
+impl EntityInputHandler for CruxTerminalView {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let text = self.marked_text.as_ref()?;
+        let start = utf16_offset_to_utf8(text, range_utf16.start).min(text.len());
+        let end = utf16_offset_to_utf8(text, range_utf16.end).min(text.len());
+        *adjusted_range = Some(range_utf16);
+        Some(text[start..end].to_string())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let range = if let Some(ref sel) = self.marked_text_selected_range {
+            sel.clone()
+        } else if let Some(ref text) = self.marked_text {
+            let utf16_len: usize = text.chars().map(|c| c.len_utf16()).sum();
+            utf16_len..utf16_len
+        } else {
+            0..0
+        };
+        Some(UTF16Selection {
+            range,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        self.marked_text.as_ref().map(|text| {
+            let utf16_len: usize = text.chars().map(|c| c.len_utf16()).sum();
+            0..utf16_len
+        })
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.marked_text = None;
+        self.marked_text_selected_range = None;
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Clear composition state — this is a commit.
+        self.marked_text = None;
+        self.marked_text_selected_range = None;
+
+        if !text.is_empty() {
+            // Dedup: some CJK input methods fire duplicate insertText: calls
+            // within a few milliseconds. Suppress exact duplicates.
+            let now = Instant::now();
+            if let Some((ref prev_text, prev_time)) = self.last_ime_commit {
+                if prev_text == text && now.duration_since(prev_time) < IME_DEDUP_WINDOW {
+                    return;
+                }
+            }
+            self.last_ime_commit = Some((text.to_string(), now));
+
+            // NFC normalize: macOS may deliver Korean/CJK text in NFD (decomposed
+            // Hangul jamo). Terminals and shells expect NFC (precomposed).
+            let normalized: String = text.nfc().collect();
+
+            // Clear selection when typing.
+            self.terminal.with_term_mut(|term| {
+                term.selection = None;
+            });
+            // Write committed text to PTY.
+            self.terminal.write_to_pty(normalized.as_bytes());
+        }
+
+        self.reset_cursor_blink();
+        cx.notify();
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Store composition (preedit) text — NEVER write to PTY.
+        // NFC normalize for correct display of decomposed Hangul jamo.
+        if new_text.is_empty() {
+            self.marked_text = None;
+            self.marked_text_selected_range = None;
+        } else {
+            let normalized: String = new_text.nfc().collect();
+            self.marked_text = Some(normalized);
+            self.marked_text_selected_range = new_selected_range;
+        }
+
+        self.reset_cursor_blink();
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        // Return cursor cell bounds for IME candidate window positioning.
+        let content = self.terminal.content();
+        let cursor_row = content.cursor.point.line.0 as f32;
+        let cursor_col = content.cursor.point.column.0 as f32;
+        let x = element_bounds.origin.x + self.cell_width * cursor_col;
+        let y = element_bounds.origin.y + self.cell_height * cursor_row;
+        Some(Bounds::new(
+            point(x, y),
+            size(self.cell_width, self.cell_height),
+        ))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: gpui::Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let col = ((f32::from(point.x) - f32::from(self.canvas_origin.x))
+            / f32::from(self.cell_width)) as usize;
+        Some(col)
+    }
+}
+
 impl Render for CruxTerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Measure cell metrics.
@@ -640,6 +902,17 @@ impl Render for CruxTerminalView {
         // Get the terminal content snapshot.
         let content = self.terminal.content();
         let focused = self.focus_handle.is_focused(window);
+        // On focus loss, commit any active IME composition to PTY.
+        // Without this, switching windows mid-composition would discard preedit text.
+        if self.is_focused && !focused {
+            if let Some(text) = self.marked_text.take() {
+                self.marked_text_selected_range = None;
+                if !text.is_empty() {
+                    let normalized: String = text.nfc().collect();
+                    self.terminal.write_to_pty(normalized.as_bytes());
+                }
+            }
+        }
         self.is_focused = focused;
         let bell_active = self.is_bell_active();
         let cursor_visible = self.calculate_cursor_visible();
@@ -657,7 +930,12 @@ impl Render for CruxTerminalView {
         // Capture cell dimensions for the resize canvas.
         let cell_width = self.cell_width;
         let cell_height = self.cell_height;
-        let entity = cx.entity().clone();
+        let marked_text = self.marked_text.clone();
+
+        // Clone entity and focus handle for the resize/input canvas closures.
+        let entity_for_resize = cx.entity().clone();
+        let entity_for_input = cx.entity().clone();
+        let focus_for_input = self.focus_handle.clone();
 
         div()
             .id("terminal-view")
@@ -674,19 +952,27 @@ impl Render for CruxTerminalView {
             .on_mouse_up(MouseButton::Right, cx.listener(Self::handle_mouse_up))
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
             .child(
-                // Invisible canvas to detect size changes and capture origin.
+                // Invisible canvas to detect size changes, capture origin, and register IME.
                 canvas(
                     move |bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {
                         (bounds.size, bounds.origin)
                     },
-                    move |_bounds: Bounds<Pixels>,
+                    move |bounds: Bounds<Pixels>,
                           (size, origin): (Size<Pixels>, Point2D<Pixels>),
-                          _window: &mut Window,
+                          window: &mut Window,
                           cx: &mut App| {
-                        entity.update(cx, |this, _cx| {
+                        entity_for_resize.update(cx, |this, _cx| {
                             this.resize_if_needed(size);
                             this.canvas_origin = origin;
                         });
+                        // Register IME input handler during paint phase.
+                        // GPUI routes character keystrokes through this handler,
+                        // which calls our EntityInputHandler methods.
+                        window.handle_input(
+                            &focus_for_input,
+                            ElementInputHandler::new(bounds, entity_for_input.clone()),
+                            cx,
+                        );
                     },
                 )
                 .absolute()
@@ -701,6 +987,7 @@ impl Render for CruxTerminalView {
                 focused,
                 bell_active,
                 cursor_visible,
+                marked_text,
             ))
     }
 }

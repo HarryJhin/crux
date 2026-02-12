@@ -19,6 +19,8 @@ pub struct TerminalPrepaintState {
     selection_quads: Vec<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
     bell_flash: bool,
+    /// IME composition overlay: (shaped_line, origin, background_quad).
+    composition: Option<(ShapedLine, gpui::Point<Pixels>, PaintQuad)>,
 }
 
 /// Render the terminal content as a canvas element.
@@ -34,6 +36,7 @@ pub fn render_terminal_canvas(
     focused: bool,
     bell_active: bool,
     cursor_visible: bool,
+    marked_text: Option<String>,
 ) -> impl IntoElement {
     let fg_color = colors::foreground_hsla();
     let bg_color = colors::background_hsla();
@@ -294,12 +297,54 @@ pub fn render_terminal_canvas(
                 None
             };
 
+            // Shape IME composition (preedit) overlay text.
+            let composition = marked_text.as_ref().and_then(|text| {
+                if text.is_empty() {
+                    return None;
+                }
+                let cursor_row = content.cursor.point.line.0 as usize;
+                let cursor_col = content.cursor.point.column.0;
+                let comp_origin = point(
+                    origin.x + cell_width * cursor_col as f32,
+                    origin.y + cell_height * cursor_row as f32,
+                );
+                let run = TextRun {
+                    len: text.len(),
+                    font: font.clone(),
+                    color: fg_color,
+                    background_color: None,
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.0),
+                        color: Some(fg_color),
+                        wavy: false,
+                    }),
+                    strikethrough: None,
+                };
+                let shaped = text_system.shape_line(
+                    SharedString::from(text.clone()),
+                    font_size,
+                    &[run],
+                    None,
+                );
+                let comp_bg = fill(
+                    Bounds::new(comp_origin, size(shaped.width, cell_height)),
+                    Hsla {
+                        h: 0.6,
+                        s: 0.4,
+                        l: 0.85,
+                        a: 0.95,
+                    },
+                );
+                Some((shaped, comp_origin, comp_bg))
+            });
+
             TerminalPrepaintState {
                 shaped_lines,
                 bg_quads,
                 selection_quads,
                 cursor_quad,
                 bell_flash: bell_active,
+                composition,
             }
         },
         // Paint: draw backgrounds, selection, text lines, and cursor.
@@ -335,7 +380,15 @@ pub fn render_terminal_canvas(
                 window.paint_quad(cursor_quad);
             }
 
-            // 6. Paint bell flash overlay.
+            // 6. Paint IME composition (preedit) overlay.
+            if let Some((shaped, comp_origin, bg_quad)) = state.composition {
+                window.paint_quad(bg_quad);
+                if let Err(e) = shaped.paint(comp_origin, cell_height, window, cx) {
+                    log::warn!("failed to paint IME composition: {}", e);
+                }
+            }
+
+            // 7. Paint bell flash overlay.
             if state.bell_flash {
                 let flash_color = Hsla {
                     h: 0.0,
