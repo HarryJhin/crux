@@ -31,7 +31,7 @@
 
 Claude Code 같은 AI 코딩 도구는 **터미널 패널을 프로그래밍 방식으로 제어**해야 합니다 — 화면 분할, 명령 전송, 출력 읽기. 지금은 AppleScript 래퍼를 덕지덕지 붙이거나 tmux를 거쳐야만 가능합니다. 이걸 네이티브로 지원하는 터미널은 없습니다.
 
-한편, **macOS의 모든 터미널은 한국어 입력 버그가 있습니다.** Alacritty는 한글 조합 중 스페이스가 두 번 입력됩니다. Ghostty는 수정 키를 누르면 조합 중인 한글이 깨집니다. iTerm2는 한자 변환 창 위치가 어긋납니다. 이건 소수의 문제가 아닙니다 — 수백만 CJK 사용자가 매일 겪는 일입니다.
+한편, **macOS 터미널의 한국어 입력은 여전히 고장나 있습니다.** Alacritty는 한글 조합 중 [스페이스가 두 번 입력](https://github.com/alacritty/alacritty/issues/8079)됩니다. Ghostty는 IME 입력 중 백스페이스가 [이미 확정된 글자까지 삭제](https://github.com/ghostty-org/ghostty/issues/7225)하는 리그레션이 반복됩니다. WezTerm은 [구름 입력기에서 방향키가 오동작](https://github.com/wezterm/wezterm/issues/7473)합니다. 이건 소수의 문제가 아닙니다 — CJK 사용자가 매일 겪는 일입니다.
 
 Crux는 이 두 문제를 근본부터 해결하기 위해 만들어졌습니다:
 

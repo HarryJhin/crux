@@ -1,7 +1,7 @@
 ---
 title: "IME 및 리치 클립보드 연구"
 description: "NSTextInputClient protocol, Korean IME failure analysis (Alacritty/Ghostty/WezTerm), NSPasteboard rich clipboard, objc2 Rust bindings, drag-and-drop"
-date: 2026-02-11
+date: 2026-02-12
 phase: [3]
 topics: [ime, korean, cjk, nstextinputclient, nspasteboard, clipboard, objc2, drag-and-drop]
 status: final
@@ -21,6 +21,15 @@ related:
 
 1. [macOS IME 통합 (NSTextInputClient)](#1-macos-ime-통합-nstextinputclient)
 2. [기존 터미널의 한국어 IME 실패 사례 분석](#2-기존-터미널의-한국어-ime-실패-사례-분석)
+   - 2.1 Alacritty: 창 프리즈 (#4469)
+   - 2.2 WezTerm/Ghostty: 조합 중 문자 사라짐 + Ghostty 리그레션
+   - 2.3 Alacritty: 이중 스페이스 (#8079)
+   - 2.4 Alacritty: 한글 후 숫자/특수문자 무시 (#6942)
+   - 2.5 WezTerm: 구름 입력기 방향키 (#7473)
+   - 2.6 Kitty: 한국어 입력 불가 (#4907)
+   - 2.7 크로스 터미널: IME 단축키 충돌
+   - 2.8 Claude Code: IME 커서 위치 (#19207)
+   - 2.9 올바른 구현의 모습 (요구사항 종합)
 3. [리치 클립보드 (NSPasteboard)](#3-리치-클립보드-nspasteboard)
 4. [Rust-macOS 바인딩](#4-rust-macos-바인딩)
 5. [터미널 특화 IME 과제](#5-터미널-특화-ime-과제)
@@ -314,6 +323,19 @@ PR #4854: 두 가지 핵심 변경
      특수 ctrl+key 핸들링 트리거를 방지
 ```
 
+**Ghostty 수정 이후 리그레션** (v1.2.0+, 2025-2026):
+
+위 수정들이 v1.1.0에 반영되었으나, 이후에도 CJK IME 관련 리그레션이 반복 발생하고 있다:
+
+| 이슈 | 증상 | 상태 |
+|------|------|------|
+| [#7225](https://github.com/ghostty-org/ghostty/issues/7225) | macOS tip: Backspace가 조합 중 이미 확정된 문자까지 삭제 | 오픈 (2025-04) |
+| [#9826](https://github.com/ghostty-org/ghostty/discussions/9826) | Ctrl-M이 일본어 IME preedit 확정 대신 터미널로 전달, preedit 클리어 | 오픈 (2026-01) |
+| [#6772](https://github.com/ghostty-org/ghostty/issues/6772) | Linux: fcitx5-hangul 한국어 입력 완전 불가 (2025-03 nightly) | 오픈 |
+| [#5312](https://github.com/ghostty-org/ghostty/discussions/5312) | nvim에서 한국어 입력 시 Backspace 오동작 | 토론 중 |
+
+**교훈**: IME 버그는 "수정 → 리그레션" 사이클이 반복되는 패턴이 있다. 근본 원인은 키 이벤트 파이프라인에서 IME 상태를 일관되게 추적하지 못하는 것이다. Crux는 이를 방지하기 위해 **IME 상태 머신을 키 이벤트 처리의 최상위 레이어**로 두어야 한다.
+
 **WezTerm 근본 원인**:
 - NFD(분해형) 한글 문자 렌더링 문제 ([#1474](https://github.com/wezterm/wezterm/issues/1474))
 - 전각 문자 너비 계산 오류
@@ -395,7 +417,95 @@ fn process_events(&mut self, events: &[Event]) {
 
 **참고**: [Alacritty #8079](https://github.com/alacritty/alacritty/issues/8079)
 
-### 2.4 Claude Code: IME 커서 위치 오류 (#19207)
+### 2.4 Alacritty: 한글 입력 시 첫 숫자/특수문자 무시 (#6942)
+
+**증상**: 한글 입력 후 숫자나 특수문자를 입력하면 첫 번째 문자가 무시됨. 예: "ㅎ1" 입력 시 "ㅎ"만 표시되고 "1"이 사라짐.
+
+**근본 원인**: IME가 한글 조합을 종료하면서 발생하는 이벤트 순서 문제. 조합 종료 이벤트와 새 문자 입력 이벤트가 동일 프레임에서 처리될 때, 새 문자 이벤트가 소실됨.
+
+**Crux 설계 시사점**: IME 조합 종료(`unmarkText`/`insertText`) 직후 들어오는 키 이벤트를 반드시 버퍼링하고 순차 처리해야 한다. 이벤트 소실을 방지하기 위해 IME 상태 전환과 키 이벤트 처리 사이에 명시적 동기화 포인트가 필요하다.
+
+**참고**: [Alacritty #6942](https://github.com/alacritty/alacritty/issues/6942)
+
+### 2.5 WezTerm: 구름(Gureum) 입력기 방향키 오동작 (#7473)
+
+**증상**: macOS에서 구름(Gureum) 한국어 입력기 사용 시, 한글 조합 중 방향키(화살표 키)를 누르면 현재 글자가 확정되면서 동시에 커서가 이동. 기대 동작은 조합만 확정하고 커서는 제자리.
+
+**보고 시점**: 2026년 1월 (최신)
+
+**근본 원인**: 방향키 이벤트가 IME에 먼저 전달되지 않고 터미널이 직접 처리. 구름 입력기는 방향키로 조합을 확정하는 동작을 기대하지만, WezTerm은 방향키를 즉시 커서 이동으로 해석함.
+
+**관련 이슈**: WezTerm [#7234](https://github.com/wezterm/wezterm/issues/7234) — macOS에서 Ctrl+H가 일본어 IME preedit이 아닌 확정된 문자를 삭제
+
+**Crux 설계 시사점**:
+```rust
+// 조합 중 방향키/편집키 처리
+fn handle_navigation_key(&self, key: NavigationKey) -> bool {
+    if self.has_marked_text() {
+        // 1단계: 현재 조합을 먼저 확정
+        self.confirm_composition();
+        // 2단계: 방향키 이벤트는 소비 (커서 이동하지 않음)
+        // macOS 기본 IME와 구름 모두 이 동작을 기대함
+        return true; // 이벤트 소비
+    }
+    false // 조합 중이 아니면 일반 처리
+}
+```
+
+**참고**: [WezTerm #7473](https://github.com/wezterm/wezterm/issues/7473)
+
+### 2.6 Kitty: 한국어 입력 자체 불가 (#4907)
+
+**증상**: Kitty 터미널에서 한국어 입력이 아예 되지 않거나, 입력 로캘 변경이 불가능.
+
+**근본 원인**: Kitty는 XIM(X Input Method) 기반 IME를 지원하지 않으며, IBUS 또는 Wayland 네이티브 IME만 지원. 사용자가 `GLFW_IM_MODULE=ibus` 환경 변수를 수동 설정해야 작동하며, 이마저도 플랫폼/배포판에 따라 동작이 불안정.
+
+**관련 이슈**:
+- [#462](https://github.com/kovidgoyal/kitty/issues/462) — CJK Input Support (장기 논의, 2018~현재)
+- Debian Bookworm 업데이트 이후 CJK 입력이 중단되는 사례 보고
+
+**Crux 설계 시사점**: Crux는 macOS 전용이므로 `NSTextInputClient`만 올바르게 구현하면 되지만, Kitty의 사례는 "IME 지원을 플랫폼 추상화 레이어에 맡기면 안 된다"는 교훈을 준다. 플랫폼 네이티브 IME API를 직접 구현해야 한다.
+
+**참고**: [Kitty #4907](https://github.com/kovidgoyal/kitty/issues/4907), [Kitty #462](https://github.com/kovidgoyal/kitty/issues/462)
+
+### 2.7 크로스 터미널 패턴: IME 활성 시 단축키 충돌
+
+**증상**: 한국어/일본어/중국어 IME가 활성화된 상태에서 터미널 단축키(Ctrl+C, Ctrl+D 등)가 동작하지 않음. IME가 키 이벤트를 가로채서 터미널에 전달하지 않기 때문.
+
+**영향받는 터미널**:
+| 터미널 | 이슈 | 상태 |
+|--------|------|------|
+| WezTerm | [#615](https://github.com/wezterm/wezterm/issues/615) | 오픈 |
+| Windows Terminal | [#13593](https://github.com/microsoft/terminal/issues/13593) | 오픈 |
+| OpenCode | [#8652](https://github.com/anomalyco/opencode/issues/8652) | 오픈 |
+
+**근본 원인**: IME는 모든 키 입력을 가로채서 조합에 사용할 수 있는지 판단한다. 한국어 세벌식(Sebeolsik) 레이아웃처럼 많은 키를 사용하는 입력기에서 특히 심각. IME가 "이 키는 내가 처리하지 않겠다"고 반환하지 않으면 터미널이 해당 키를 받지 못함.
+
+**Crux 설계 시사점**:
+```rust
+// IME 활성 시 단축키 우선순위 전략
+fn should_bypass_ime(&self, event: &KeyEvent) -> bool {
+    // 조합 중이 아닌 경우에만 바이패스 검토
+    if self.has_marked_text() {
+        return false; // 조합 중에는 항상 IME 우선
+    }
+
+    // IME가 활성이지만 조합 중이 아닌 경우:
+    // 특정 단축키는 IME를 바이패스
+    match event {
+        // Ctrl+C, Ctrl+D 등 터미널 시그널은 항상 터미널 우선
+        KeyEvent { modifiers: Ctrl, key: 'c' | 'd' | 'z' | '\\', .. } => true,
+        // 나머지는 IME에 먼저 전달
+        _ => false,
+    }
+}
+```
+
+**참고**: [WezTerm #615](https://github.com/wezterm/wezterm/issues/615), [Windows Terminal #13593](https://github.com/microsoft/terminal/issues/13593)
+
+### 2.8 Claude Code: IME 커서 위치 오류 (#19207)
+
+> **참고**: 기존 2.4에서 번호 변경됨.
 
 **증상**: CJK IME 후보 창이 입력 위치가 아닌 화면 왼쪽 하단에 표시됨.
 
@@ -431,7 +541,7 @@ $ 입력하세요: 한█       $ 입력하세요: 한
 
 **참고**: [Claude Code #19207](https://github.com/anthropics/claude-code/issues/19207), [Claude Code #16372](https://github.com/anthropics/claude-code/issues/16372)
 
-### 2.5 올바른 구현의 모습
+### 2.9 올바른 구현의 모습
 
 기존 터미널들의 실패 패턴을 종합하면, **올바른 IME 구현**은 다음 조건을 만족해야 한다:
 
@@ -440,9 +550,14 @@ $ 입력하세요: 한█       $ 입력하세요: 한
 | IME 크래시 내성 | IME 프로세스 크래시 시 터미널이 데드락되지 않아야 함 | Alacritty #4469 |
 | preedit 상태에서 수식키 무시 | Ctrl/Shift/Cmd 단독 입력이 preedit를 파괴하면 안 됨 | Ghostty #4634 |
 | 이벤트 중복 방지 | IME 커밋과 키보드 이벤트의 중복 처리 방지 | Alacritty #8079 |
+| 조합 종료 직후 이벤트 보존 | IME 조합 종료와 새 문자 입력이 동시 발생 시 이벤트 소실 방지 | Alacritty #6942 |
 | 정확한 후보 창 위치 | firstRect가 실제 커서 셀 위치를 반환해야 함 | Claude Code #19207 |
 | 전각 문자 너비 처리 | CJK 문자의 2-cell 너비를 정확히 계산해야 함 | WezTerm |
 | preedit/PTY 분리 | 조합 중 텍스트를 PTY 버퍼와 분리하여 렌더링해야 함 | 대부분의 터미널 |
+| 조합 중 방향키 처리 | 방향키 입력 시 조합 확정 후 커서 이동하지 않아야 함 | WezTerm #7473 |
+| Backspace 범위 제한 | 조합 중 Backspace가 확정된 문자까지 삭제하면 안 됨 | Ghostty #7225 |
+| IME 활성 시 단축키 분리 | 조합 중이 아닐 때 터미널 시그널(Ctrl+C 등)은 IME 바이패스 | WezTerm #615 |
+| 네이티브 IME API 직접 구현 | 플랫폼 추상화에 의존하지 않고 NSTextInputClient 직접 구현 | Kitty #4907 |
 
 ---
 
@@ -1278,15 +1393,39 @@ impl ImeAutoSwitch {
 - [arboard](https://github.com/1Password/arboard) - 1Password의 클립보드 라이브러리
 - [unicode-width](https://crates.io/crates/unicode-width) - 유니코드 문자 너비 계산
 
-### 터미널 IME 버그 사례
-- [Alacritty #4469](https://github.com/alacritty/alacritty/issues/4469) - 한국어 IME 프리즈
-- [Alacritty #8079](https://github.com/alacritty/alacritty/issues/8079) - CJK 이중 스페이스
-- [Ghostty #4634](https://github.com/ghostty-org/ghostty/issues/4634) - preedit 사라짐 (수정됨)
-- [Ghostty #7225](https://github.com/ghostty-org/ghostty/issues/7225) - Backspace 조합 문자 삭제 버그
+### 터미널 IME 버그 사례 (2026-02-12 최신화)
+
+**Alacritty** (v0.16.1, 2025-10):
+- [#4469](https://github.com/alacritty/alacritty/issues/4469) - 한국어 IME(uim) 프리즈/데드락
+- [#8079](https://github.com/alacritty/alacritty/issues/8079) - CJK 이중 스페이스 입력 (오픈)
+- [#6942](https://github.com/alacritty/alacritty/issues/6942) - 한글 입력 후 첫 숫자/특수문자 무시 (오픈)
+
+**Ghostty** (v1.2.0, 1.3.0 예정 2026-03):
+- [#4634](https://github.com/ghostty-org/ghostty/issues/4634) - preedit 사라짐 (v1.1.0 수정됨)
+- [#7225](https://github.com/ghostty-org/ghostty/issues/7225) - Backspace가 확정 문자까지 삭제 (리그레션, 오픈)
+- [#9826](https://github.com/ghostty-org/ghostty/discussions/9826) - Ctrl-M이 preedit 확정 대신 터미널로 전달 (리그레션, 2026-01)
+- [#6772](https://github.com/ghostty-org/ghostty/issues/6772) - Linux fcitx5-hangul 한국어 입력 불가 (오픈)
+- [#5312](https://github.com/ghostty-org/ghostty/discussions/5312) - nvim 한국어 입력 시 Backspace 오동작
+
+**WezTerm** (날짜 기반 릴리즈):
+- [#7473](https://github.com/wezterm/wezterm/issues/7473) - 구름 입력기 방향키 오동작 (2026-01, 오픈)
+- [#7234](https://github.com/wezterm/wezterm/issues/7234) - Ctrl+H가 일본어 IME preedit 아닌 확정 문자 삭제
+- [#615](https://github.com/wezterm/wezterm/issues/615) - IME 활성 시 키보드 단축키 불가 (오픈)
+- [#1474](https://github.com/wezterm/wezterm/issues/1474) - NFD 한글 렌더링 깨짐
+- [#2569](https://github.com/wezterm/wezterm/issues/2569) - preedit이 모든 패널에 표시
+
+**Kitty** (v0.45.0):
+- [#4907](https://github.com/kovidgoyal/kitty/issues/4907) - 한국어 입력 자체 불가 / 로캘 변경 불가
+- [#462](https://github.com/kovidgoyal/kitty/issues/462) - CJK Input Support (장기 논의, 2018~현재)
+
+**Claude Code / TUI 앱**:
 - [Claude Code #19207](https://github.com/anthropics/claude-code/issues/19207) - IME 커서 위치 오류 (수정됨)
 - [Claude Code #21382](https://github.com/anthropics/claude-code/issues/21382) - Quick Launcher 한국어 IME 실패
-- [WezTerm #1474](https://github.com/wezterm/wezterm/issues/1474) - NFD 한글 렌더링
-- [WezTerm #2569](https://github.com/wezterm/wezterm/issues/2569) - preedit이 모든 패널에 표시
+- [Zed #46055](https://github.com/zed-industries/zed/issues/46055) - 터미널 내 CLI 도구에서 IME 후보 창 위치 오류
+
+**크로스 터미널 단축키 충돌**:
+- [Windows Terminal #13593](https://github.com/microsoft/terminal/issues/13593) - 중국어 IME 활성 시 Ctrl+Shift 단축키 불가
+- [OpenCode #8652](https://github.com/anomalyco/opencode/issues/8652) - macOS 한국어 IME 활성 시 단축키 불가
 
 ### 한글 유니코드/조합
 - [How Korean input methods work](https://m10k.eu/2025/03/08/hangul-utf8.html) - 한글 입력기 동작 원리 상세 설명
@@ -1317,12 +1456,15 @@ impl ImeAutoSwitch {
 
 ### 필수 (P0)
 
-- [ ] `NSTextInputClient` 프로토콜 전체 구현
+- [ ] `NSTextInputClient` 프로토콜 전체 구현 (Kitty #4907 교훈: 플랫폼 추상화에 의존하지 말 것)
 - [ ] 한글 조합 중 `setMarkedText` → 오버레이 렌더링 (PTY 미전송)
 - [ ] `insertText` → PTY에 확정 텍스트 전송
 - [ ] `firstRectForCharacterRange` → 정확한 화면 좌표 반환
-- [ ] preedit 중 수식키 입력 무시 (Ghostty 교훈)
-- [ ] IME 커밋/키보드 이벤트 중복 방지 (Alacritty 교훈)
+- [ ] preedit 중 수식키 입력 무시 (Ghostty #4634 교훈)
+- [ ] IME 커밋/키보드 이벤트 중복 방지 (Alacritty #8079 교훈)
+- [ ] 조합 종료 직후 키 이벤트 소실 방지 (Alacritty #6942 교훈)
+- [ ] 조합 중 Backspace 범위 제한 — 확정 문자 삭제 방지 (Ghostty #7225 교훈)
+- [ ] 조합 중 방향키 처리 — 확정 후 커서 이동 안 함 (WezTerm #7473 교훈)
 - [ ] 전각 문자 2셀 너비 처리 (wcwidth)
 
 ### 중요 (P1)
@@ -1331,7 +1473,8 @@ impl ImeAutoSwitch {
 - [ ] 클립보드 이미지 → 임시 파일 변환
 - [ ] 드래그 앤 드롭 지원 (NSDraggingDestination)
 - [ ] 클립보드 컨텐츠 타입 감지
-- [ ] NFD 한글 정규화 (NFC 변환)
+- [ ] NFD 한글 정규화 (NFC 변환) (WezTerm #1474 교훈)
+- [ ] IME 활성 시 터미널 단축키 우선순위 분리 (WezTerm #615 교훈)
 
 ### 차별화 (P2)
 

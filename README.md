@@ -31,7 +31,7 @@
 
 AI coding tools like Claude Code need **programmatic pane control** — split terminals, send commands, read output. Today this means bolting AppleScript wrappers onto terminals or routing everything through tmux. No terminal has this built in natively.
 
-Meanwhile, **every terminal on macOS has Korean input bugs.** Alacritty double-types spaces during Hangul composition. Ghostty destroys preedit text on modifier key presses. iTerm2 mispositions the candidate window. These aren't edge cases — they affect millions of CJK users daily.
+Meanwhile, **Korean input in macOS terminals is still broken.** Alacritty [double-types spaces](https://github.com/alacritty/alacritty/issues/8079) during Hangul composition. Ghostty has [recurring regressions](https://github.com/ghostty-org/ghostty/issues/7225) with backspace deleting committed characters during IME input. WezTerm's [Gureum input method](https://github.com/wezterm/wezterm/issues/7473) misbehaves with arrow keys. These aren't edge cases — they affect CJK users daily.
 
 Crux is built to solve both problems from the ground up:
 
