@@ -25,6 +25,8 @@ pub struct CruxApp {
     pane_events: Vec<PaneEvent>,
     /// Tracks which pane was split from which parent pane.
     pane_parents: HashMap<PaneId, PaneId>,
+    /// Background MCP server process.
+    mcp_process: Option<std::process::Child>,
 }
 
 impl CruxApp {
@@ -41,6 +43,13 @@ impl CruxApp {
                 log::error!("Failed to start IPC server: {}", e);
                 (None, None)
             }
+        };
+
+        // Spawn MCP server if IPC server started successfully.
+        let mcp_process = if let Some(socket_path) = &socket_path {
+            Self::spawn_mcp_server(socket_path)
+        } else {
+            None
         };
 
         let dock_area = cx.new(|cx| DockArea::new("crux-dock", Some(1), window, cx));
@@ -66,6 +75,43 @@ impl CruxApp {
             next_pane_id: AtomicU64::new(1),
             pane_events: Vec::new(),
             pane_parents: HashMap::new(),
+            mcp_process,
+        }
+    }
+
+    /// Attempt to spawn the crux-mcp binary next to the current executable.
+    fn spawn_mcp_server(socket_path: &std::path::Path) -> Option<std::process::Child> {
+        // Find the crux-mcp binary next to the current executable.
+        let exe_path = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(e) => {
+                log::warn!("Failed to get current executable path: {}", e);
+                return None;
+            }
+        };
+
+        let mcp_binary = exe_path.parent()?.join("crux-mcp");
+        if !mcp_binary.exists() {
+            log::info!("MCP server binary not found at {}, skipping auto-launch", mcp_binary.display());
+            return None;
+        }
+
+        // Spawn crux-mcp with --socket flag.
+        match std::process::Command::new(&mcp_binary)
+            .arg("--socket")
+            .arg(socket_path)
+            .stderr(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .spawn()
+        {
+            Ok(child) => {
+                log::info!("MCP server spawned at {} (PID {})", mcp_binary.display(), child.id());
+                Some(child)
+            }
+            Err(e) => {
+                log::warn!("Failed to spawn MCP server: {}", e);
+                None
+            }
         }
     }
 
@@ -777,5 +823,21 @@ impl Render for CruxApp {
                 this.action_select_tab(8, window, cx);
             }))
             .child(self.dock_area.clone())
+    }
+}
+
+impl Drop for CruxApp {
+    fn drop(&mut self) {
+        // Clean up MCP server process.
+        if let Some(mut child) = self.mcp_process.take() {
+            log::info!("Terminating MCP server (PID {})...", child.id());
+
+            // Attempt graceful termination, then force kill if needed.
+            let _ = child.kill();
+            match child.wait() {
+                Ok(status) => log::info!("MCP server exited with status: {}", status),
+                Err(e) => log::warn!("Failed to wait for MCP server exit: {}", e),
+            }
+        }
     }
 }
