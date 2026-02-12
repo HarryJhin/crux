@@ -161,10 +161,35 @@ pub fn render_terminal_canvas(
                         }
                     }
 
-                    // Skip wide character spacer cells (second cell of a 2-wide char).
-                    // Background and selection quads above are still rendered for this cell,
-                    // but the text was already emitted by the preceding wide character cell.
+                    // Wide character spacer cells (second cell of a 2-wide char).
+                    // The actual character was emitted by the preceding cell, but we
+                    // MUST push an invisible space to keep glyph_count == column_count.
+                    // GPUI's force_width positions glyphs at glyph_index * cell_width,
+                    // so skipping this cell would shift all subsequent characters left.
                     if cell_flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+                        let spacer = ' ';
+                        let spacer_len = spacer.len_utf8();
+                        line_text.push(spacer);
+                        // Extend or start a transparent run for the spacer.
+                        let can_extend = text_runs.last().is_some_and(|last| {
+                            last.color == cell_fg_hsla
+                                && last.font.weight == font.weight
+                                && last.font.style == FontStyle::Normal
+                                && last.underline.is_none()
+                                && last.strikethrough.is_none()
+                        });
+                        if can_extend {
+                            text_runs.last_mut().unwrap().len += spacer_len;
+                        } else {
+                            text_runs.push(TextRun {
+                                len: spacer_len,
+                                font: font.clone(),
+                                color: cell_fg_hsla,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            });
+                        }
                         continue;
                     }
 
@@ -399,6 +424,12 @@ pub fn render_terminal_canvas(
 
             // 6. Paint IME composition (preedit) overlay.
             if let Some((shaped, comp_origin, bg_quad)) = state.composition {
+                log::debug!(
+                    "[IME] painting composition overlay at ({}, {}), width={}",
+                    f32::from(comp_origin.x),
+                    f32::from(comp_origin.y),
+                    f32::from(shaped.width),
+                );
                 window.paint_quad(bg_quad);
                 if let Err(e) = shaped.paint(comp_origin, cell_height, window, cx) {
                     log::warn!("failed to paint IME composition: {}", e);

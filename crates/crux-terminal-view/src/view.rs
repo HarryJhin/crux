@@ -67,6 +67,17 @@ pub struct CruxTerminalView {
     marked_text_selected_range: Option<Range<usize>>,
     /// Last IME commit for deduplication (text, timestamp). Prevents double-space bug (Alacritty #8079).
     last_ime_commit: Option<(String, Instant)>,
+    /// Synthetic text buffer for IME recombination.
+    ///
+    /// Korean/CJK input methods call `attributedSubstringForProposedRange:`
+    /// to recall previously committed characters when assembling multi-part
+    /// syllables (e.g., ㅇ + ㅏ → 아). Terminals have no text document, so
+    /// we maintain a small synthetic buffer of recently committed text.
+    /// The IME queries this buffer via `text_for_range` and uses
+    /// `replacementRange` in `setMarkedText:` to replace previous characters.
+    ///
+    /// Cleared when the user presses Enter, arrow keys, or other non-text keys.
+    ime_buffer: String,
 }
 
 /// Alias for GPUI's 2D point to avoid confusion with alacritty's grid Point.
@@ -151,6 +162,7 @@ impl CruxTerminalView {
             marked_text: None,
             marked_text_selected_range: None,
             last_ime_commit: None,
+            ime_buffer: String::new(),
         }
     }
 
@@ -173,8 +185,12 @@ impl CruxTerminalView {
         if w > px(0.0) {
             self.cell_width = w;
         }
-        // Line height: font_size * ~1.2 for comfortable terminal spacing.
-        self.cell_height = self.font_size + px(3.0);
+        // Use actual font metrics (ascent + descent) for line height.
+        // ShapedLine derefs to LineLayout which provides ascent/descent.
+        // Add small leading (2px) for comfortable terminal spacing.
+        let ascent = shaped.ascent;
+        let descent = shaped.descent;
+        self.cell_height = (ascent + descent + px(2.0)).ceil();
         self.cell_measured = true;
     }
 
@@ -250,13 +266,25 @@ impl CruxTerminalView {
         // replace_text_in_range(). This avoids double-processing: if we wrote
         // to the PTY here, the IME would also write via insertText:.
         if Self::is_ime_candidate(&event.keystroke, self.option_as_alt) {
+            log::debug!(
+                "[IME] is_ime_candidate=true, letting key '{}' pass to IME",
+                event.keystroke.key,
+            );
             return; // Don't stop propagation — let event reach IME.
         }
 
         // Get the current terminal mode for application cursor key detection.
         let mode = self.terminal.content().mode;
 
+        log::debug!(
+            "[IME] key '{}' NOT ime_candidate, sending to PTY directly",
+            event.keystroke.key,
+        );
+
         if let Some(bytes) = input::keystroke_to_bytes(&event.keystroke, mode, self.option_as_alt) {
+            // Non-IME keys (arrows, enter, etc.) invalidate the IME buffer
+            // since the cursor position in the shell has changed.
+            self.ime_buffer.clear();
             // Clear selection when typing.
             self.terminal.with_term_mut(|term| {
                 term.selection = None;
@@ -264,6 +292,23 @@ impl CruxTerminalView {
             self.terminal.write_to_pty(&bytes);
             cx.stop_propagation();
             cx.notify();
+        }
+    }
+
+    /// Trim the IME buffer to a reasonable size.
+    /// Only the last few characters are needed for Korean recombination.
+    fn trim_ime_buffer(&mut self) {
+        const MAX_IME_BUFFER_CHARS: usize = 8;
+        let char_count = self.ime_buffer.chars().count();
+        if char_count > MAX_IME_BUFFER_CHARS {
+            let skip = char_count - MAX_IME_BUFFER_CHARS;
+            let byte_offset = self
+                .ime_buffer
+                .char_indices()
+                .nth(skip)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.ime_buffer.drain(..byte_offset);
         }
     }
 
@@ -756,11 +801,40 @@ impl EntityInputHandler for CruxTerminalView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
-        let text = self.marked_text.as_ref()?;
-        let start = utf16_offset_to_utf8(text, range_utf16.start).min(text.len());
-        let end = utf16_offset_to_utf8(text, range_utf16.end).min(text.len());
+        // Build virtual document: [ime_buffer][marked_text]
+        // The Korean IM calls attributedSubstringForProposedRange: to recall
+        // previously committed characters for syllable recombination.
+        let buf_utf16_len: usize = self.ime_buffer.chars().map(|c| c.len_utf16()).sum();
+        let marked_utf16_len: usize = self
+            .marked_text
+            .as_ref()
+            .map(|t| t.chars().map(|c| c.len_utf16()).sum())
+            .unwrap_or(0);
+        let total_utf16_len = buf_utf16_len + marked_utf16_len;
+
+        if range_utf16.start >= total_utf16_len {
+            return None;
+        }
+
+        // Build the virtual document string.
+        let mut doc = self.ime_buffer.clone();
+        if let Some(ref mt) = self.marked_text {
+            doc.push_str(mt);
+        }
+
+        let range_start = range_utf16.start;
+        let range_end = range_utf16.end;
+        let start = utf16_offset_to_utf8(&doc, range_start).min(doc.len());
+        let end = utf16_offset_to_utf8(&doc, range_end).min(doc.len());
         *adjusted_range = Some(range_utf16);
-        Some(text[start..end].to_string())
+        log::trace!(
+            "[IME] text_for_range({:?}) -> {:?} (buf={:?}, marked={:?})",
+            range_start..range_end,
+            &doc[start..end],
+            self.ime_buffer,
+            self.marked_text,
+        );
+        Some(doc[start..end].to_string())
     }
 
     fn selected_text_range(
@@ -769,13 +843,18 @@ impl EntityInputHandler for CruxTerminalView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
+        // Cursor position in the virtual document [ime_buffer][marked_text].
+        let buf_utf16_len: usize = self.ime_buffer.chars().map(|c| c.len_utf16()).sum();
         let range = if let Some(ref sel) = self.marked_text_selected_range {
-            sel.clone()
+            // Offset selection into the virtual document.
+            (buf_utf16_len + sel.start)..(buf_utf16_len + sel.end)
         } else if let Some(ref text) = self.marked_text {
-            let utf16_len: usize = text.chars().map(|c| c.len_utf16()).sum();
-            utf16_len..utf16_len
+            let marked_utf16_len: usize = text.chars().map(|c| c.len_utf16()).sum();
+            let pos = buf_utf16_len + marked_utf16_len;
+            pos..pos
         } else {
-            0..0
+            // Cursor at end of buffer (after last committed char).
+            buf_utf16_len..buf_utf16_len
         };
         Some(UTF16Selection {
             range,
@@ -788,10 +867,31 @@ impl EntityInputHandler for CruxTerminalView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        self.marked_text.as_ref().map(|text| {
-            let utf16_len: usize = text.chars().map(|c| c.len_utf16()).sum();
-            0..utf16_len
-        })
+        log::trace!("[IME] marked_text_range called, marked_text={:?}, ime_buffer={:?}", self.marked_text, self.ime_buffer);
+        // Return Some only when there's real composition (marked text).
+        //
+        // GPUI routes keystrokes based on is_composing (window.rs:1696-1712):
+        //   - is_composing=true  → IME receives the key FIRST via handleEvent:
+        //   - is_composing=false → GPUI dispatch first, IME fallback (line 1762)
+        //
+        // When not composing, character keys that our handle_key_down doesn't
+        // stop_propagation for will fall through to [inputContext handleEvent:]
+        // at line 1762, so the IME still receives them.
+        //
+        // Returning None (→ markedRange={NSNotFound,0}) when there's no real
+        // composition tells the Korean IM "ready for new composition", causing
+        // it to call setMarkedText: (compose) instead of insertText: (commit)
+        // for the first consonant.
+        if let Some(ref text) = self.marked_text {
+            if !text.is_empty() {
+                let buf_utf16_len: usize =
+                    self.ime_buffer.chars().map(|c| c.len_utf16()).sum();
+                let marked_utf16_len: usize =
+                    text.chars().map(|c| c.len_utf16()).sum();
+                return Some(buf_utf16_len..(buf_utf16_len + marked_utf16_len));
+            }
+        }
+        None
     }
 
     fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -801,22 +901,27 @@ impl EntityInputHandler for CruxTerminalView {
 
     fn replace_text_in_range(
         &mut self,
-        _range: Option<Range<usize>>,
+        range_utf16: Option<Range<usize>>,
         text: &str,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        log::info!("[IME] replace_text_in_range called, text={:?}, range={:?}, buf={:?}", text, range_utf16, self.ime_buffer);
         // Clear composition state — this is a commit.
         self.marked_text = None;
         self.marked_text_selected_range = None;
 
         if !text.is_empty() {
             // Dedup: some CJK input methods fire duplicate insertText: calls
-            // within a few milliseconds. Suppress exact duplicates.
+            // within a few milliseconds. Only suppress exact duplicates that
+            // have NO replacement range — commits with a range are part of
+            // Korean syllable recombination and must always be processed.
             let now = Instant::now();
-            if let Some((ref prev_text, prev_time)) = self.last_ime_commit {
-                if prev_text == text && now.duration_since(prev_time) < IME_DEDUP_WINDOW {
-                    return;
+            if range_utf16.is_none() {
+                if let Some((ref prev_text, prev_time)) = self.last_ime_commit {
+                    if prev_text == text && now.duration_since(prev_time) < IME_DEDUP_WINDOW {
+                        return;
+                    }
                 }
             }
             self.last_ime_commit = Some((text.to_string(), now));
@@ -825,12 +930,51 @@ impl EntityInputHandler for CruxTerminalView {
             // Hangul jamo). Terminals and shells expect NFC (precomposed).
             let normalized: String = text.nfc().collect();
 
+            // Handle replacement range: the IM may replace previously committed
+            // buffer characters (e.g., Korean recombination ㅇ+ㅏ → 아).
+            let buf_utf16_len: usize = self.ime_buffer.chars().map(|c| c.len_utf16()).sum();
+            if let Some(ref range) = range_utf16 {
+                if range.start < buf_utf16_len {
+                    // Replacement covers buffer characters → send DEL to PTY
+                    // for each character being replaced, then update buffer.
+                    let replace_start = utf16_offset_to_utf8(&self.ime_buffer, range.start);
+                    let replace_end =
+                        utf16_offset_to_utf8(&self.ime_buffer, range.end.min(buf_utf16_len));
+                    let chars_to_delete = self.ime_buffer[replace_start..replace_end].chars().count();
+                    // Send DEL (\x7f) for each character to erase from shell input.
+                    for _ in 0..chars_to_delete {
+                        self.terminal.write_to_pty(&[0x7f]);
+                    }
+                    self.ime_buffer.replace_range(replace_start..replace_end, "");
+                }
+            }
+
             // Clear selection when typing.
             self.terminal.with_term_mut(|term| {
                 term.selection = None;
             });
-            // Write committed text to PTY.
+
+            // Control characters (backspace, DEL, escape, etc.) must be
+            // forwarded to PTY but NEVER stored in the IME buffer.
+            // Storing them corrupts text_for_range queries and breaks
+            // Korean syllable recombination.
+            let is_control = normalized.chars().all(|c| c.is_control());
+
+            // Always write to PTY.
             self.terminal.write_to_pty(normalized.as_bytes());
+
+            if is_control {
+                // Backspace/DEL: pop the last char from the buffer to keep
+                // it in sync with the shell's visible input line.
+                if normalized.contains('\u{8}') || normalized.contains('\x7f') {
+                    self.ime_buffer.pop();
+                }
+                // Other control chars (e.g. ESC) just pass through to PTY.
+            } else {
+                // Printable text: append to buffer for IME recombination.
+                self.ime_buffer.push_str(&normalized);
+                self.trim_ime_buffer();
+            }
         }
 
         self.reset_cursor_blink();
@@ -839,12 +983,30 @@ impl EntityInputHandler for CruxTerminalView {
 
     fn replace_and_mark_text_in_range(
         &mut self,
-        _range: Option<Range<usize>>,
+        range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        log::info!("[IME] replace_and_mark_text_in_range called, text={:?}, range={:?}, selected={:?}, buf={:?}", new_text, range_utf16, new_selected_range, self.ime_buffer);
+        // Handle replacement range: the Korean IM may replace a previously
+        // committed consonant with a combined syllable (e.g., replace "ㅇ"
+        // in the buffer with composition "아").
+        let buf_utf16_len: usize = self.ime_buffer.chars().map(|c| c.len_utf16()).sum();
+        if let Some(ref range) = range_utf16 {
+            if range.start < buf_utf16_len {
+                let replace_start = utf16_offset_to_utf8(&self.ime_buffer, range.start);
+                let replace_end =
+                    utf16_offset_to_utf8(&self.ime_buffer, range.end.min(buf_utf16_len));
+                let chars_to_delete = self.ime_buffer[replace_start..replace_end].chars().count();
+                for _ in 0..chars_to_delete {
+                    self.terminal.write_to_pty(&[0x7f]);
+                }
+                self.ime_buffer.replace_range(replace_start..replace_end, "");
+            }
+        }
+
         // Store composition (preedit) text — NEVER write to PTY.
         // NFC normalize for correct display of decomposed Hangul jamo.
         if new_text.is_empty() {
@@ -932,6 +1094,9 @@ impl Render for CruxTerminalView {
         let cell_width = self.cell_width;
         let cell_height = self.cell_height;
         let marked_text = self.marked_text.clone();
+        if marked_text.is_some() {
+            log::debug!("[IME] render: passing marked_text={:?} to canvas", marked_text);
+        }
 
         // Clone entity and focus handle for the resize/input canvas closures.
         let entity_for_resize = cx.entity().clone();
