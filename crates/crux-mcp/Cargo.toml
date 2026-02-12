@@ -1,0 +1,24 @@
+[package]
+name = "crux-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "crux-mcp"
+path = "src/main.rs"
+
+[dependencies]
+crux-protocol.workspace = true
+crux-ipc.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+log.workspace = true
+clap.workspace = true
+env_logger = "0.11"
+regex = "1"

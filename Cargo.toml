@@ -7,6 +7,7 @@ members = [
     "crates/crux-ipc",
     "crates/crux-clipboard",
     "crates/crux-protocol",
+    "crates/crux-mcp",
 ]
 default-members = ["crates/crux-app"]
 
@@ -32,6 +33,10 @@ gpui-component-assets = "0.5.1"
 # Terminal core
 alacritty_terminal = "0.25"
 portable-pty = "0.9"
+
+# MCP
+rmcp = { version = "0.15", features = ["server", "macros", "transport-io"] }
+schemars = "0.8"
 
 # Utilities
 serde = { version = "1", features = ["derive"] }
