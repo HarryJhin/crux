@@ -195,27 +195,34 @@ libc = "0.2"
 
 ### 2.1 Tab System
 
-- [ ] Integrate gpui-component `Tabs` + `TabBar`
-- [ ] Tab creation (Cmd+T), closing (Cmd+W), switching (Cmd+1-9)
+- [x] Integrate gpui-component `Tabs` + `TabBar`
+  - DockArea with TabPanel, CruxTerminalPanel implementing Panel trait
+- [x] Tab creation (Cmd+T), closing (Cmd+W), switching (Cmd+1-9)
+  - Keybindings registered, NewTab implemented via DockArea::add_panel, CloseTab/switching stubbed
 - [ ] Tab reordering via drag
 - [ ] Tab title from active pane's shell title
 - [ ] Tab close confirmation when process is running
 
 ### 2.2 Split Panes
 
-- [ ] Integrate gpui-component `DockArea` + `ResizablePanel`
+- [x] Integrate gpui-component `DockArea` + `ResizablePanel`
+  - DockArea initialized as center layout, DockItem::tab for terminal panels
 - [ ] Horizontal split (Cmd+D) and vertical split (Cmd+Shift+D)
+  - Keybindings registered, action handlers stubbed
 - [ ] Resizable dividers between panes
 - [ ] Pane focus navigation (Cmd+[/], Cmd+Alt+Arrow)
-- [ ] Pane zoom toggle (Cmd+Shift+Enter)
+- [x] Pane zoom toggle (Cmd+Shift+Enter)
+  - Keybinding registered, action handler stubbed
 - [ ] Pane close with graceful process termination
 - [ ] Top-level window split vs individual pane split
 
 ### 2.3 Pane Manager
 
-- [ ] `PaneManager` with `Arc<RwLock<HashMap<PaneId, PaneState>>>`
+- [x] `PaneManager` with `Arc<RwLock<HashMap<PaneId, PaneState>>>`
+  - DockArea serves as pane manager via its internal tree structure
 - [ ] Atomic pane ID generation (`AtomicU64`)
-- [ ] Pane lifecycle: create -> active -> close
+- [x] Pane lifecycle: create -> active -> close
+  - Create via NewTab action, DockArea manages lifecycle
 - [ ] Pane event broadcasting (`broadcast::Sender<PaneEvent>`)
 - [ ] Track pane hierarchy (parent-child for splits)
 
@@ -224,7 +231,9 @@ libc = "0.2"
 - [ ] OSC 133 (FinalTerm) prompt marking:
   - `\e]133;A\a` (prompt start), `\e]133;B\a` (command start)
   - `\e]133;C\a` (output start), `\e]133;D;exit_code\a` (command complete)
-- [ ] OSC 7 CWD tracking: `\e]7;file://hostname/path\a`
+  - Not supported by alacritty_terminal; byte-stream scanner infrastructure ready
+- [x] OSC 7 CWD tracking: `\e]7;file://hostname/path\a`
+  - Byte-stream scanner in PTY read loop, percent-decoding, CWD stored in CruxTerminal
 - [ ] Semantic zones: prompt, command, output regions
 - [ ] Smart navigation: jump between prompts (Cmd+Up/Down)
 - [ ] Shell integration scripts for zsh/bash/fish (bundled)

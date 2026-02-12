@@ -26,6 +26,8 @@ crux-protocol = { path = "crates/crux-protocol" }
 
 # GPUI
 gpui = "0.2.2"
+gpui-component = "0.5.1"
+gpui-component-assets = "0.5.1"
 
 # Terminal core
 alacritty_terminal = "0.25"
