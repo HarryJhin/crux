@@ -78,6 +78,39 @@ pub fn start_pty_read_loop(
 }
 
 /// Detect the user's default shell.
+///
+/// Priority order:
+/// 1. $SHELL environment variable
+/// 2. macOS dscl UserShell lookup
+/// 3. /bin/zsh fallback
 pub fn detect_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+    // Try $SHELL environment variable
+    if let Ok(shell) = std::env::var("SHELL") {
+        if !shell.is_empty() {
+            return shell;
+        }
+    }
+
+    // Try macOS dscl lookup
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(username) = std::env::var("USER") {
+            if let Ok(output) = std::process::Command::new("dscl")
+                .args([".", "-read", &format!("/Users/{}", username), "UserShell"])
+                .output()
+            {
+                if output.status.success() {
+                    if let Ok(stdout) = String::from_utf8(output.stdout) {
+                        // Output format: "UserShell: /bin/zsh"
+                        if let Some(shell) = stdout.split_whitespace().nth(1) {
+                            return shell.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Final fallback
+    "/bin/zsh".to_string()
 }

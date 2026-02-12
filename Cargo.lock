@@ -1263,6 +1263,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "gpui",
+ "libc",
  "log",
  "parking_lot",
  "portable-pty",

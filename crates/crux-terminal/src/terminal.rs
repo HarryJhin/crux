@@ -8,7 +8,7 @@ use alacritty_terminal::index::Point;
 use alacritty_terminal::selection::SelectionRange;
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::{Config, Term, TermMode};
+use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape};
 
 use crate::event::{CruxEventListener, TerminalEvent};
@@ -51,6 +51,25 @@ impl Default for TerminalSize {
     }
 }
 
+/// Damage state captured from alacritty_terminal's damage tracking.
+#[derive(Debug, Clone)]
+pub enum DamageState {
+    /// No lines were damaged since the last render.
+    None,
+    /// Only specific lines were damaged (partial update).
+    Partial(Vec<LineDamage>),
+    /// The entire terminal is damaged and needs full re-render.
+    Full,
+}
+
+/// Damage bounds for a single line.
+#[derive(Debug, Clone, Copy)]
+pub struct LineDamage {
+    pub line: usize,
+    pub left: usize,
+    pub right: usize,
+}
+
 /// Snapshot of terminal content for rendering.
 ///
 /// This is a self-contained copy of the terminal state so that the
@@ -63,6 +82,8 @@ pub struct TerminalContent {
     pub selection: Option<SelectionRange>,
     pub cols: usize,
     pub rows: usize,
+    /// Damage information from alacritty_terminal's damage tracking.
+    pub damage: DamageState,
 }
 
 /// A single cell with its grid position.
@@ -189,7 +210,30 @@ impl CruxTerminal {
     /// then returns an owned snapshot that can be used without holding
     /// any lock.
     pub fn content(&self) -> TerminalContent {
-        let term = self.term.lock();
+        let mut term = self.term.lock();
+
+        // Capture damage state before rendering.
+        let damage = match term.damage() {
+            TermDamage::Full => DamageState::Full,
+            TermDamage::Partial(iter) => {
+                let lines: Vec<LineDamage> = iter
+                    .map(|d| LineDamage {
+                        line: d.line,
+                        left: d.left,
+                        right: d.right,
+                    })
+                    .collect();
+                if lines.is_empty() {
+                    DamageState::None
+                } else {
+                    DamageState::Partial(lines)
+                }
+            }
+        };
+
+        // Reset damage after capturing it.
+        term.reset_damage();
+
         let content = term.renderable_content();
 
         let cols = term.columns();
@@ -219,6 +263,7 @@ impl CruxTerminal {
             selection: content.selection,
             cols,
             rows,
+            damage,
         }
     }
 
@@ -249,17 +294,39 @@ impl CruxTerminal {
 
 impl Drop for CruxTerminal {
     fn drop(&mut self) {
-        // Kill the child process.
+        // Graceful shutdown: SIGHUP first, then SIGKILL if needed.
+        //
+        // 1. Send SIGHUP to let the shell clean up (save history, etc.)
+        // 2. Wait briefly for graceful exit
+        // 3. Force SIGKILL only if the child refuses to exit
+        if let Some(pid) = self.child.process_id() {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGHUP);
+            }
+
+            // Give the child up to 500ms to exit gracefully.
+            for _ in 0..10 {
+                if let Ok(Some(_)) = self.child.try_wait() {
+                    if let Some(thread) = self.reader_thread.take() {
+                        let _ = thread.join();
+                    }
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+
+        // Force kill if still running.
         if let Err(e) = self.child.kill() {
             log::debug!("failed to kill child process: {}", e);
         }
 
-        // Wait for the child to exit to prevent zombies.
+        // Reap to prevent zombies.
         if let Err(e) = self.child.wait() {
             log::debug!("failed to wait for child process: {}", e);
         }
 
-        // Join the reader thread (it should exit once the PTY closes).
+        // Join the reader thread.
         if let Some(thread) = self.reader_thread.take() {
             let _ = thread.join();
         }

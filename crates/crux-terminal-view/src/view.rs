@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use gpui::*;
 
 use crux_terminal::{
-    Column, CruxTerminal, Line, Point, Scroll, Selection, SelectionType, Side, TermMode,
-    TerminalEvent, TerminalSize,
+    Column, CruxTerminal, DamageState, Line, Point, Scroll, Selection, SelectionType, Side,
+    TermMode, TerminalEvent, TerminalSize,
 };
 
 use crate::element::render_terminal_canvas;
@@ -37,6 +37,14 @@ pub struct CruxTerminalView {
     bell_at: Option<Instant>,
     /// Whether cell dimensions have been measured (cached after first layout).
     cell_measured: bool,
+    /// Whether the terminal has new content to render.
+    dirty: bool,
+    /// Whether the cursor is currently visible in the blink cycle.
+    cursor_blink_visible: bool,
+    /// When the cursor blink last reset (user input or click).
+    cursor_blink_epoch: Instant,
+    /// Interval for cursor blink on/off cycles.
+    cursor_blink_interval: Duration,
 }
 
 /// Alias for GPUI's 2D point to avoid confusion with alacritty's grid Point.
@@ -62,13 +70,16 @@ impl CruxTerminalView {
 
         let terminal = CruxTerminal::new(None, size).expect("failed to create terminal");
 
-        // Periodic refresh at ~60fps to pick up PTY output.
+        // Periodic refresh at ~60fps to pick up PTY output and handle cursor blink.
         cx.spawn(async |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(16))
                 .await;
-            let ok = this.update(cx, |_this: &mut Self, cx: &mut Context<Self>| {
-                cx.notify();
+            let ok = this.update(cx, |this: &mut Self, cx: &mut Context<Self>| {
+                // Only notify if there's actual work: dirty content, active bell, or cursor blinking.
+                if this.dirty || this.is_bell_active() || this.should_notify_for_blink() {
+                    cx.notify();
+                }
             });
             if ok.is_err() {
                 break;
@@ -87,6 +98,10 @@ impl CruxTerminalView {
             title: None,
             bell_at: None,
             cell_measured: false,
+            dirty: false,
+            cursor_blink_visible: true,
+            cursor_blink_epoch: Instant::now(),
+            cursor_blink_interval: Duration::from_millis(500),
         }
     }
 
@@ -140,6 +155,9 @@ impl CruxTerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Reset cursor blink on any key input.
+        self.reset_cursor_blink();
+
         // Handle Cmd+V for paste before forwarding to terminal.
         if event.keystroke.modifiers.platform && event.keystroke.key.as_str() == "v" {
             self.paste_from_clipboard(cx);
@@ -196,6 +214,9 @@ impl CruxTerminalView {
         cx: &mut Context<Self>,
     ) {
         self.focus_handle.focus(window);
+
+        // Reset cursor blink on mouse click.
+        self.reset_cursor_blink();
 
         let grid_point = self.pixel_to_grid(event.position);
         let side = self.pixel_to_side(event.position);
@@ -308,7 +329,9 @@ impl CruxTerminalView {
 
     /// Process pending terminal events.
     fn process_events(&mut self, window: &mut Window) {
+        let mut had_events = false;
         for event in self.terminal.drain_events() {
+            had_events = true;
             match event {
                 TerminalEvent::PtyWrite(text) => {
                     self.terminal.write_to_pty(text.as_bytes());
@@ -327,12 +350,35 @@ impl CruxTerminalView {
                 TerminalEvent::Wakeup => {}
             }
         }
+        // Mark dirty if we received any events.
+        if had_events {
+            self.dirty = true;
+        }
     }
 
     /// Returns true if the bell flash is currently active.
     fn is_bell_active(&self) -> bool {
         self.bell_at
             .is_some_and(|t| t.elapsed() < BELL_FLASH_DURATION)
+    }
+
+    /// Reset cursor blink to visible state (called on user input or click).
+    fn reset_cursor_blink(&mut self) {
+        self.cursor_blink_visible = true;
+        self.cursor_blink_epoch = Instant::now();
+    }
+
+    /// Returns true if we should notify GPUI for cursor blink animation.
+    fn should_notify_for_blink(&self) -> bool {
+        // Always notify during blink to keep the animation running.
+        true
+    }
+
+    /// Calculate whether the cursor should be visible based on blink cycle.
+    fn calculate_cursor_visible(&self) -> bool {
+        let elapsed = self.cursor_blink_epoch.elapsed();
+        let cycle = (elapsed.as_millis() / self.cursor_blink_interval.as_millis()) % 2;
+        cycle == 0
     }
 }
 
@@ -354,6 +400,16 @@ impl Render for CruxTerminalView {
         let content = self.terminal.content();
         let focused = self.focus_handle.is_focused(window);
         let bell_active = self.is_bell_active();
+        let cursor_visible = self.calculate_cursor_visible();
+
+        // Update dirty flag based on damage state.
+        match &content.damage {
+            DamageState::Full | DamageState::Partial(_) => self.dirty = true,
+            DamageState::None => {}
+        }
+
+        // Clear dirty flag after processing.
+        self.dirty = false;
 
         // Capture cell dimensions for the resize canvas.
         let cell_width = self.cell_width;
@@ -397,6 +453,7 @@ impl Render for CruxTerminalView {
                 self.font_size,
                 focused,
                 bell_active,
+                cursor_visible,
             ))
     }
 }

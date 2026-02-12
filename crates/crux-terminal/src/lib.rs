@@ -10,7 +10,9 @@ pub mod terminal;
 
 // Re-export primary types at crate root for convenience.
 pub use event::{CruxEventListener, TerminalEvent};
-pub use terminal::{CruxTerminal, CursorState, IndexedCell, TerminalContent, TerminalSize};
+pub use terminal::{
+    CruxTerminal, CursorState, DamageState, IndexedCell, LineDamage, TerminalContent, TerminalSize,
+};
 
 // Re-export commonly needed alacritty types so downstream crates
 // don't need to depend on alacritty_terminal directly.

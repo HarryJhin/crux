@@ -295,12 +295,16 @@ related:
 - **필요 리서치 분량**: 소규모 (Zed 패턴 적용)
 - **참고**: `competitive/terminal-structures.md` §2.5
 
-### GAP 9.2: 셀 배칭 (Cell Batching — BatchedTextRun)
-- **현황**: 현재 셀별 TextRun 생성. Zed는 동일 스타일의 인접 셀을 하나의 BatchedTextRun으로 병합 (평균 ~10셀/배치).
-- **영향**: Important — TextRun 생성 및 paint call 대폭 감소
-- **Phase**: Phase 1
-- **필요 리서치 분량**: 소규모 (Zed 패턴 적용)
-- **참고**: `competitive/terminal-structures.md` §2.5
+### ~~GAP 9.2: 셀 배칭 (Cell Batching — BatchedTextRun)~~ ✅ 해소
+- **현황**: `element.rs` lines 159-178에 이미 구현됨. `can_extend` 로직이 동일 스타일(color, weight, style, underline, strikethrough)의 인접 셀을 하나의 TextRun으로 병합.
+- **검증 완료**:
+  - Wide character 처리 정상 (WIDE_CHAR_SPACER 스킵 at line 113)
+  - Font 속성 정확히 비교 (weight, style)
+  - Underline/strikethrough 비교 정상
+  - `cell_width` 파라미터는 character width hint로 올바르게 전달됨 (lines 194, 202)
+- **최적화 여지**: Font 생성이 여전히 셀마다 발생하나(lines 130-134), 실제 TextRun 생성은 스타일 변경 시에만 발생하므로 충분히 효율적. 추가 최적화는 premature optimization.
+- **Phase**: Phase 1 완료
+- **참고**: `crates/crux-terminal-view/src/element.rs:159-178`
 
 ### GAP 9.3: Damage Tracking (3단계 시스템)
 - **현황**: 현재 매 프레임 전체 리렌더. Ghostty는 3단계(false/partial/full), alacritty_terminal은 TermDamage 제공.

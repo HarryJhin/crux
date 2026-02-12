@@ -24,6 +24,7 @@ pub struct TerminalPrepaintState {
 /// Render the terminal content as a canvas element.
 ///
 /// Returns a sized canvas that paints terminal cells, backgrounds, selection, and cursor.
+#[allow(clippy::too_many_arguments)]
 pub fn render_terminal_canvas(
     content: TerminalContent,
     cell_width: Pixels,
@@ -32,6 +33,7 @@ pub fn render_terminal_canvas(
     font_size: Pixels,
     focused: bool,
     bell_active: bool,
+    cursor_visible: bool,
 ) -> impl IntoElement {
     let fg_color = colors::foreground_hsla();
     let bg_color = colors::background_hsla();
@@ -58,6 +60,10 @@ pub fn render_terminal_canvas(
                 let mut line_text = String::with_capacity(content.cols);
                 let mut text_runs: Vec<TextRun> = Vec::new();
 
+                // Track background runs for merging adjacent cells with same bg color.
+                let mut bg_run_start: Option<usize> = None;
+                let mut bg_run_color: Option<Hsla> = None;
+
                 for col in 0..content.cols {
                     let cell_idx = row * content.cols + col;
                     let (ch, cell_fg, cell_bg, cell_flags) = if cell_idx < content.cells.len() {
@@ -76,18 +82,46 @@ pub fn render_terminal_canvas(
                     let cell_fg_hsla = colors::color_to_hsla(cell_fg);
                     let cell_bg_hsla = colors::color_to_hsla(cell_bg);
 
-                    // Collect non-default background quads.
+                    // Merge horizontally adjacent cells with same non-default background.
                     if cell_bg_hsla != bg_color {
-                        bg_quads.push(fill(
-                            Bounds::new(
-                                point(
-                                    origin.x + cell_width * col as f32,
-                                    origin.y + cell_height * row as f32,
+                        if bg_run_color == Some(cell_bg_hsla) {
+                            // Continue the current run (no action needed yet).
+                        } else {
+                            // Flush previous run if it exists.
+                            if let (Some(start_col), Some(color)) = (bg_run_start, bg_run_color) {
+                                let run_width = (col - start_col) as f32 * cell_width;
+                                bg_quads.push(fill(
+                                    Bounds::new(
+                                        point(
+                                            origin.x + cell_width * start_col as f32,
+                                            origin.y + cell_height * row as f32,
+                                        ),
+                                        size(run_width, cell_height),
+                                    ),
+                                    color,
+                                ));
+                            }
+                            // Start a new run.
+                            bg_run_start = Some(col);
+                            bg_run_color = Some(cell_bg_hsla);
+                        }
+                    } else {
+                        // Flush run when hitting default background.
+                        if let (Some(start_col), Some(color)) = (bg_run_start, bg_run_color) {
+                            let run_width = (col - start_col) as f32 * cell_width;
+                            bg_quads.push(fill(
+                                Bounds::new(
+                                    point(
+                                        origin.x + cell_width * start_col as f32,
+                                        origin.y + cell_height * row as f32,
+                                    ),
+                                    size(run_width, cell_height),
                                 ),
-                                size(cell_width, cell_height),
-                            ),
-                            cell_bg_hsla,
-                        ));
+                                color,
+                            ));
+                        }
+                        bg_run_start = None;
+                        bg_run_color = None;
                     }
 
                     // Check if this cell is part of the selection.
@@ -178,6 +212,21 @@ pub fn render_terminal_canvas(
                     }
                 }
 
+                // Flush any remaining background run at end of row.
+                if let (Some(start_col), Some(color)) = (bg_run_start, bg_run_color) {
+                    let run_width = (content.cols - start_col) as f32 * cell_width;
+                    bg_quads.push(fill(
+                        Bounds::new(
+                            point(
+                                origin.x + cell_width * start_col as f32,
+                                origin.y + cell_height * row as f32,
+                            ),
+                            size(run_width, cell_height),
+                        ),
+                        color,
+                    ));
+                }
+
                 // Shape the line text.
                 if line_text.is_empty() || text_runs.is_empty() {
                     let shaped = text_system.shape_line(
@@ -205,8 +254,10 @@ pub fn render_terminal_canvas(
                 }
             }
 
-            // Build cursor quad.
-            let cursor_quad = if content.mode.contains(crux_terminal::TermMode::SHOW_CURSOR) {
+            // Build cursor quad (only if visible in blink cycle).
+            let cursor_quad = if cursor_visible
+                && content.mode.contains(crux_terminal::TermMode::SHOW_CURSOR)
+            {
                 let cursor_row = content.cursor.point.line.0 as usize;
                 let cursor_col = content.cursor.point.column.0;
                 let cx_pos = point(
