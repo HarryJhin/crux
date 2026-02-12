@@ -40,7 +40,12 @@ research/
 ├── competitive/              ← ★ 경쟁 분석 (신규)
 │   ├── ghostty-warp-analysis.md  Ghostty 아키텍처 + Warp 대체 분석 + 포지셔닝
 │   ├── terminal-structures.md    ★ 5대 터미널 프로젝트 구조 비교 (Alacritty/WezTerm/Rio/Ghostty/Zed)
-│   └── warp-settings-analysis.md ★ Warp 설정 기능 조사 및 Crux 채택 분석
+│   ├── warp-settings-analysis.md ★ Warp 설정 기능 조사 및 Crux 채택 분석
+│   ├── alacritty-known-bugs.md   ★ Alacritty 알려진 버그 및 교훈 (IME, 렌더링, 메모리)
+│   ├── ghostty-known-bugs.md     ★ Ghostty 알려진 버그 53건 (IME, Metal, 마우스)
+│   ├── wezterm-kitty-known-bugs.md ★ WezTerm/Kitty 버그 패턴 및 안티패턴
+│   ├── iterm2-warp-known-bugs.md ★ iTerm2/Warp 버그 및 보안 취약점
+│   └── rio-cross-terminal-known-bugs.md ★ Rio 및 공통 터미널 버그 108건
 ├── testing/                  ← ★ 테스팅 인프라 (신규)
 │   └── ai-agent-testing.md       AI 에이전트 테스팅: MCP 도구 7개, 셀프 테스팅, CI/CD
 └── platform/                 ← macOS 플랫폼 네이티브
@@ -118,6 +123,11 @@ research/
 | [competitive/ghostty-warp-analysis.md](competitive/ghostty-warp-analysis.md) | ★ Ghostty 아키텍처, Warp 대체 분석, 포지셔닝 |
 | [competitive/terminal-structures.md](competitive/terminal-structures.md) | ★ 프로젝트 구조 비교: 크레이트 분리, 렌더링, 최적화 패턴 |
 | [competitive/warp-settings-analysis.md](competitive/warp-settings-analysis.md) | ★ Warp 설정 기능 조사: 채택 우선순위, TOML 확장 제안 |
+| [competitive/alacritty-known-bugs.md](competitive/alacritty-known-bugs.md) | ★ Alacritty 알려진 버그: CJK/IME, macOS 렌더링, 메모리 누수, 아키텍처 교훈 |
+| [competitive/ghostty-known-bugs.md](competitive/ghostty-known-bugs.md) | ★ Ghostty 버그 53건: IME preedit, Metal GPU, 마우스, 키보드, tmux |
+| [competitive/wezterm-kitty-known-bugs.md](competitive/wezterm-kitty-known-bugs.md) | ★ WezTerm/Kitty 버그: macOS 플랫폼, 멀티플렉서, 키보드 프로토콜, 그래픽스 |
+| [competitive/iterm2-warp-known-bugs.md](competitive/iterm2-warp-known-bugs.md) | ★ iTerm2/Warp 버그: 커서 동기화, 보안 취약점(CVE), GPU 배터리, UX 안티패턴 |
+| [competitive/rio-cross-terminal-known-bugs.md](competitive/rio-cross-terminal-known-bugs.md) | ★ Rio 및 공통 버그 108건: VT 파싱, wcwidth, CSI 보안, 유니코드 |
 
 ### Future: Accessibility
 | Document | Key Topics |
@@ -156,6 +166,7 @@ research/
 | **하이퍼링크 (OSC 8)** | [core/hyperlinks.md](core/hyperlinks.md) | [core/terminal-emulation.md](core/terminal-emulation.md) |
 | **경쟁 분석/포지셔닝** | [competitive/ghostty-warp-analysis.md](competitive/ghostty-warp-analysis.md) | [competitive/terminal-structures.md](competitive/terminal-structures.md) |
 | **설정 시스템 (Warp 참고)** | [competitive/warp-settings-analysis.md](competitive/warp-settings-analysis.md) | [core/config-system.md](core/config-system.md) |
+| **터미널 버그 회피** | [competitive/alacritty-known-bugs.md](competitive/alacritty-known-bugs.md) | [competitive/ghostty-known-bugs.md](competitive/ghostty-known-bugs.md), [competitive/wezterm-kitty-known-bugs.md](competitive/wezterm-kitty-known-bugs.md) |
 | **누락 영역 확인** | [gap-analysis.md](gap-analysis.md) | 전체 |
 
 ---
@@ -226,5 +237,6 @@ testing/ai-agent-testing ★ ──► integration/mcp-integration
 - **core/ 문서 확장**: 초기 4개 → 14개로 확장. 최근 그래픽스 프로토콜, tmux 호환성 문서 추가.
 - **competitive/ 디렉토리 확장**: Ghostty/Warp 분석에 이어 5대 터미널(Alacritty, WezTerm, Rio, Ghostty, Zed) 프로젝트 구조 비교 문서 추가. 크레이트 분리 전략, 렌더링 파이프라인, 성능 최적화 패턴의 횡단 비교 제공.
 - **competitive/ 디렉토리 3번째 문서**: Warp 설정 기능 조사. Crux config-system.md와 교차 비교하여 채택 가능 설정 항목 12개 식별, TOML 스키마 확장 제안.
+- **competitive/ 버그 조사 5편**: Alacritty, Ghostty, WezTerm/Kitty, iTerm2/Warp, Rio 및 공통 이슈. 총 300+ 버그 분석으로 Crux가 동일 실수를 반복하지 않도록 방지.
 - **gap-analysis.md**: 3차 업데이트 완료 (status: current). Critical 갭 해소율 79% (11/14).
 - **keymapping.md 보강**: §16에 Kitty Keyboard Protocol 상세 (~307줄) 추가. CSI u 포맷, 5개 Flag, 스택 메커니즘 포함.
