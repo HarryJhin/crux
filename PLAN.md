@@ -293,62 +293,56 @@ libc = "0.2"
 
 Native MCP (Model Context Protocol) server embedded in Crux, enabling all MCP-compatible AI agents (Claude Desktop, Claude Code, Cursor, etc.) to programmatically control Crux. See [research/integration/mcp-integration.md](research/integration/mcp-integration.md) for full design.
 
-**Architecture**: Separate Tokio runtime thread + Unix socket (`~/.crux/mcp.sock`), communicating with GPUI main thread via `mpsc` channel.
+**Architecture** (revised): Standalone stdio binary (`crux-mcp`) that connects to Crux's existing IPC Unix socket. This collapses sections 2.9 and 2.10 — no separate bridge binary needed. The MCP server speaks stdio (for Claude Desktop / Claude Code) and forwards tool calls to Crux via the IPC socket's JSON-RPC 2.0 protocol.
 
-- [ ] Create `crux-mcp` crate with `rmcp` SDK integration
+- [x] Create `crux-mcp` crate with `rmcp` SDK integration
   - `rmcp = { version = "0.15", features = ["server", "macros", "transport-io"] }`
-  - `tokio`, `axum` for Unix socket / HTTP transport
-- [ ] MCP server lifecycle: start on app launch, stop on app exit
-  - Separate thread with `tokio::runtime::Runtime`
-  - `mpsc::Sender<PaneCommand>` for MCP → GPUI commands
-  - `oneshot::Sender` for GPUI → MCP responses
-- [ ] Unix socket transport at `~/.crux/mcp.sock`
-  - File permissions `0o600` (owner-only)
-  - Cleanup on graceful shutdown
+  - Standalone binary with `clap`, `tokio`, `env_logger`
+- [x] IPC client: thread-safe `UnixStream` with `Mutex`, length-prefixed JSON-RPC 2.0
+- [x] Socket discovery: `$CRUX_SOCKET` env → `crux_ipc::discover_socket()`
+- [ ] MCP server lifecycle: start on app launch, stop on app exit (deferred — manual launch for now)
 - [ ] HTTP localhost fallback transport (`127.0.0.1:{port}`)
-- [ ] MCP capability negotiation: `tools` + `resources`
-- [ ] Pane management tools (5):
-  - [ ] `crux_create_pane` — split pane (horizontal/vertical), return PaneInfo
-  - [ ] `crux_close_pane` — close by pane_id
-  - [ ] `crux_focus_pane` — switch focus
-  - [ ] `crux_list_panes` — all panes with metadata (id, pid, cwd, size)
-  - [ ] `crux_resize_pane` — adjust cols/rows
-- [ ] Command execution tools (5):
-  - [ ] `crux_execute_command` — run command, return exit_code + stdout
-  - [ ] `crux_send_keys` — raw key sequences (Ctrl+C, Enter, arrows)
-  - [ ] `crux_send_text` — type text into pane
-  - [ ] `crux_get_output` — capture recent N lines
-  - [ ] `crux_wait_for_output` — block until pattern matches (with timeout)
-- [ ] State inspection tools (5):
-  - [ ] `crux_get_current_directory` — shell CWD (via OSC 7)
-  - [ ] `crux_get_running_process` — foreground process name + pid
-  - [ ] `crux_get_pane_state` — full snapshot (cols, rows, cursor, scroll)
-  - [ ] `crux_get_selection` — currently selected text
-  - [ ] `crux_get_scrollback` — scrollback buffer with offset/limit pagination
-- [ ] Content capture tools (5):
-  - [ ] `crux_screenshot_pane` — GPUI render to base64 PNG
-  - [ ] `crux_get_raw_text` — ANSI-stripped plain text
-  - [ ] `crux_get_formatted_output` — ANSI codes preserved
-  - [ ] `crux_save_session` — serialize session state
-  - [ ] `crux_restore_session` — restore saved session
+- [ ] MCP capability negotiation: `tools` + `resources` (tools enabled, resources pending)
+- [x] Pane management tools (5):
+  - [x] `crux_create_pane` — split pane (horizontal/vertical), return PaneInfo
+  - [x] `crux_close_pane` — close by pane_id
+  - [x] `crux_focus_pane` — switch focus
+  - [x] `crux_list_panes` — all panes with metadata (id, pid, cwd, size)
+  - [x] `crux_resize_pane` — stub (requires GPUI resize API)
+- [x] Command execution tools (5):
+  - [x] `crux_execute_command` — run command, return exit_code + stdout
+  - [x] `crux_send_keys` — raw key sequences (Ctrl+C, Enter, arrows)
+  - [x] `crux_send_text` — type text into pane
+  - [x] `crux_get_output` — capture recent N lines
+  - [x] `crux_wait_for_output` — block until pattern matches (with timeout)
+- [x] State inspection tools (5):
+  - [x] `crux_get_current_directory` — shell CWD (via OSC 7)
+  - [x] `crux_get_running_process` — foreground process name + pid
+  - [x] `crux_get_pane_state` — full snapshot (cols, rows, cursor, scroll)
+  - [x] `crux_get_selection` — stub (requires GPUI selection API)
+  - [x] `crux_get_scrollback` — scrollback buffer with offset/limit pagination
+- [x] Content capture tools (5):
+  - [x] `crux_screenshot_pane` — stub (requires GPUI rendering pipeline)
+  - [x] `crux_get_raw_text` — ANSI-stripped plain text
+  - [x] `crux_get_formatted_output` — ANSI codes preserved
+  - [x] `crux_get_scrollback_text` — scrollback text with line range
+  - [x] `crux_save_restore_session` — stub (requires session serialization)
 - [ ] MCP resources: expose pane scrollback as `crux://pane/{id}/scrollback`
 
-### 2.10 MCP Bridge Binary (crux-mcp-bridge)
+### 2.10 MCP Bridge Binary (crux-mcp-bridge) — COLLAPSED into 2.9
 
-stdio ↔ Unix socket bridge for Claude Desktop compatibility (Claude Desktop only supports stdio transport).
+> **Note**: The `crux-mcp` binary IS the bridge. It speaks stdio (MCP) on one side and IPC (JSON-RPC 2.0 over Unix socket) on the other. No separate bridge binary needed.
 
-- [ ] Create `crux-mcp-bridge` binary crate
-  - Reads JSON-RPC from stdin, forwards to `~/.crux/mcp.sock`
-  - Reads responses from socket, writes to stdout
-- [ ] Socket discovery: `$CRUX_MCP_SOCKET` → `~/.crux/mcp.sock`
+- [x] Standalone stdio binary connecting to Crux IPC socket
+- [x] Socket discovery: `$CRUX_SOCKET` → `crux_ipc::discover_socket()`
 - [ ] Connection retry with backoff (Crux may not be running yet)
-- [ ] Claude Desktop config example:
+- [x] Claude Desktop config example:
   ```json
   {
     "mcpServers": {
       "crux-terminal": {
-        "command": "crux-mcp-bridge",
-        "args": ["--socket", "~/.crux/mcp.sock"]
+        "command": "crux-mcp",
+        "args": ["--socket", "/tmp/crux-{PID}.sock"]
       }
     }
   }
