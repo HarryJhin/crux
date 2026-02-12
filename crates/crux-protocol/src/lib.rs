@@ -259,10 +259,54 @@ pub struct GetTextResult {
     pub cursor_col: u32,
 }
 
+/// Parameters for `crux:pane/get-selection`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetSelectionParams {
+    pub pane_id: Option<PaneId>,
+}
+
+/// Result of `crux:pane/get-selection`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetSelectionResult {
+    pub text: Option<String>,
+    pub has_selection: bool,
+}
+
+/// Parameters for `crux:pane/get-snapshot`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetSnapshotParams {
+    pub pane_id: Option<PaneId>,
+}
+
+/// Result of `crux:pane/get-snapshot`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetSnapshotResult {
+    pub lines: Vec<String>,
+    pub rows: u32,
+    pub cols: u32,
+    pub cursor_row: i32,
+    pub cursor_col: u32,
+    pub cursor_shape: String,
+    pub display_offset: u32,
+    pub has_selection: bool,
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+}
+
 /// Result of `crux:pane/list`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListPanesResult {
     pub panes: Vec<PaneInfo>,
+}
+
+/// Parameters for `crux:pane/resize`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResizePaneParams {
+    pub pane_id: PaneId,
+    /// Desired width in pixels (applies when pane is in a horizontal split).
+    pub width: Option<f32>,
+    /// Desired height in pixels (applies when pane is in a vertical split).
+    pub height: Option<f32>,
 }
 
 /// Parameters for `crux:pane/activate`.
@@ -308,6 +352,32 @@ pub struct WindowListResult {
     pub windows: Vec<WindowInfo>,
 }
 
+/// Parameters for `crux:session/save`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSaveParams {
+    /// File path to save the session to. Uses default if omitted.
+    pub path: Option<String>,
+}
+
+/// Result of `crux:session/save`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSaveResult {
+    pub path: String,
+}
+
+/// Parameters for `crux:session/load`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLoadParams {
+    /// File path to load the session from. Uses default if omitted.
+    pub path: Option<String>,
+}
+
+/// Result of `crux:session/load`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLoadResult {
+    pub pane_count: u32,
+}
+
 /// Parameters for `crux:handshake`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeParams {
@@ -336,10 +406,15 @@ pub mod method {
     pub const PANE_SEND_TEXT: &str = "crux:pane/send-text";
     pub const PANE_GET_TEXT: &str = "crux:pane/get-text";
     pub const PANE_LIST: &str = "crux:pane/list";
+    pub const PANE_RESIZE: &str = "crux:pane/resize";
     pub const PANE_ACTIVATE: &str = "crux:pane/activate";
     pub const PANE_CLOSE: &str = "crux:pane/close";
+    pub const PANE_GET_SNAPSHOT: &str = "crux:pane/get-snapshot";
+    pub const PANE_GET_SELECTION: &str = "crux:pane/get-selection";
     pub const WINDOW_CREATE: &str = "crux:window/create";
     pub const WINDOW_LIST: &str = "crux:window/list";
+    pub const SESSION_SAVE: &str = "crux:session/save";
+    pub const SESSION_LOAD: &str = "crux:session/load";
 }
 
 // ---------------------------------------------------------------------------

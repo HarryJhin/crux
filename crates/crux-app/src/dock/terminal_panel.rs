@@ -2,10 +2,28 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use gpui::*;
-use gpui_component::dock::{Panel, PanelEvent, PanelState};
+use gpui_component::dock::{Panel, PanelEvent, PanelInfo, PanelState, register_panel};
 
 use crux_protocol::PaneId;
 use crux_terminal_view::CruxTerminalView;
+
+/// Register `CruxTerminalPanel` in the global PanelRegistry so that
+/// `DockArea::load` can reconstruct terminal panels from saved state.
+pub fn register(cx: &mut App) {
+    register_panel(cx, "CruxTerminalPanel", |_dock_area, _state, info, window, cx| {
+        let (pane_id, cwd) = match info {
+            PanelInfo::Panel(json) => {
+                let id = json.get("pane_id").and_then(|v| v.as_u64()).unwrap_or(0);
+                let cwd = json.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
+                (PaneId(id), cwd)
+            }
+            _ => (PaneId(0), None),
+        };
+        Box::new(cx.new(|cx| {
+            CruxTerminalPanel::new(pane_id, cwd.as_deref(), None, None, window, cx)
+        }))
+    });
+}
 
 /// A DockArea panel that wraps a `CruxTerminalView`.
 ///
@@ -53,7 +71,6 @@ impl CruxTerminalPanel {
     }
 
     /// Returns the pane ID assigned to this terminal panel.
-    #[allow(dead_code)]
     pub fn pane_id(&self) -> PaneId {
         self.pane_id
     }
@@ -83,6 +100,11 @@ impl CruxTerminalPanel {
         });
     }
 
+    /// Get the currently selected text, if any.
+    pub fn get_selection(&self, cx: &App) -> Option<String> {
+        self.terminal_view.read(cx).selection_to_string()
+    }
+
     /// Get the terminal text content and cursor position.
     pub fn get_text(&self, cx: &App) -> (Vec<String>, u32, u32) {
         let view = self.terminal_view.read(cx);
@@ -93,6 +115,27 @@ impl CruxTerminalPanel {
             content.cursor.point.line.0 as u32,
             content.cursor.point.column.0 as u32,
         )
+    }
+
+    /// Get a full snapshot of the terminal state (text + metadata).
+    pub fn get_snapshot(&self, cx: &App) -> crux_protocol::GetSnapshotResult {
+        let view = self.terminal_view.read(cx);
+        let lines = view.get_text_lines();
+        let content = view.terminal_content_snapshot();
+        let size = view.terminal_size();
+        let cursor_shape = format!("{:?}", content.cursor.shape);
+        crux_protocol::GetSnapshotResult {
+            lines,
+            rows: size.rows as u32,
+            cols: size.cols as u32,
+            cursor_row: content.cursor.point.line.0,
+            cursor_col: content.cursor.point.column.0 as u32,
+            cursor_shape,
+            display_offset: content.display_offset as u32,
+            has_selection: content.selection.is_some(),
+            title: view.title().map(|s| s.to_string()),
+            cwd: view.cwd().map(|s| s.to_string()),
+        }
     }
 
     /// Scroll to the previous prompt in the terminal scrollback.
@@ -157,8 +200,16 @@ impl Panel for CruxTerminalPanel {
         true
     }
 
-    fn dump(&self, _cx: &App) -> PanelState {
-        PanelState::new(self)
+    fn dump(&self, cx: &App) -> PanelState {
+        let view = self.terminal_view.read(cx);
+        let info_json = serde_json::json!({
+            "pane_id": self.pane_id.0,
+            "cwd": view.cwd(),
+            "title": view.title(),
+        });
+        let mut state = PanelState::new(self);
+        state.info = PanelInfo::panel(info_json);
+        state
     }
 
     fn inner_padding(&self, _cx: &App) -> bool {

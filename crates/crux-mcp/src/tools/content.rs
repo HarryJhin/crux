@@ -21,6 +21,12 @@ pub struct ScrollbackTextParams {
     pub limit: Option<i32>,
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct SessionPathParam {
+    /// File path for the session file (uses default if omitted)
+    pub path: Option<String>,
+}
+
 pub(crate) fn router() -> rmcp::handler::server::router::tool::ToolRouter<CruxMcpServer> {
     CruxMcpServer::content_tools()
 }
@@ -101,22 +107,71 @@ impl CruxMcpServer {
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
-    /// Take a screenshot of a terminal pane.
-    #[tool(description = "Take a screenshot of a terminal pane (not yet supported)")]
+    /// Take a logical screenshot of a terminal pane (text + metadata).
+    #[tool(
+        description = "Take a snapshot of a terminal pane returning text content, cursor position, dimensions, and metadata as JSON"
+    )]
     async fn crux_screenshot_pane(
         &self,
-        Parameters(_params): Parameters<ContentPaneIdParam>,
+        Parameters(params): Parameters<ContentPaneIdParam>,
     ) -> Result<CallToolResult, McpError> {
+        let ipc = self.ipc.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let p = serde_json::json!({
+                "pane_id": params.pane_id,
+            });
+            ipc.call(crux_protocol::method::PANE_GET_SNAPSHOT, p)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
+        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+
+        let output = serde_json::to_string_pretty(&result)
+            .unwrap_or_else(|_| result.to_string());
+        Ok(CallToolResult::success(vec![Content::text(output)]))
+    }
+
+    /// Save the current terminal session layout to a file.
+    #[tool(description = "Save the current terminal session layout to a JSON file. Uses ~/.config/crux/session.json by default.")]
+    async fn crux_save_session(
+        &self,
+        Parameters(params): Parameters<SessionPathParam>,
+    ) -> Result<CallToolResult, McpError> {
+        let ipc = self.ipc.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let p = serde_json::json!({
+                "path": params.path,
+            });
+            ipc.call(crux_protocol::method::SESSION_SAVE, p)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
+        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+
         Ok(CallToolResult::success(vec![Content::text(
-            "screenshot capture is not yet supported, requires GPUI rendering pipeline",
+            serde_json::to_string_pretty(&result).unwrap_or_else(|_| "session saved".into()),
         )]))
     }
 
-    /// Save or restore a terminal session.
-    #[tool(description = "Save or restore a terminal session (not yet supported)")]
-    async fn crux_save_restore_session(&self) -> Result<CallToolResult, McpError> {
+    /// Load a terminal session layout from a file, restoring panes and splits.
+    #[tool(description = "Load a terminal session layout from a JSON file, restoring panes and splits. Uses ~/.config/crux/session.json by default.")]
+    async fn crux_load_session(
+        &self,
+        Parameters(params): Parameters<SessionPathParam>,
+    ) -> Result<CallToolResult, McpError> {
+        let ipc = self.ipc.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let p = serde_json::json!({
+                "path": params.path,
+            });
+            ipc.call(crux_protocol::method::SESSION_LOAD, p)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
+        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+
         Ok(CallToolResult::success(vec![Content::text(
-            "session save/restore is not yet supported",
+            serde_json::to_string_pretty(&result).unwrap_or_else(|_| "session loaded".into()),
         )]))
     }
 }

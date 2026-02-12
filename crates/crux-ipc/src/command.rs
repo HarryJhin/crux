@@ -6,9 +6,11 @@
 use tokio::sync::oneshot;
 
 use crux_protocol::{
-    ActivatePaneParams, ClosePaneParams, GetTextParams, GetTextResult, HandshakeParams,
-    HandshakeResult, ListPanesResult, SendTextParams, SendTextResult, SplitPaneParams,
-    SplitPaneResult, WindowCreateParams, WindowCreateResult, WindowListResult,
+    ActivatePaneParams, ClosePaneParams, GetSelectionParams, GetSelectionResult, GetSnapshotParams,
+    GetSnapshotResult, GetTextParams, GetTextResult, HandshakeParams, HandshakeResult,
+    ListPanesResult, ResizePaneParams, SendTextParams, SendTextResult, SessionLoadParams,
+    SessionLoadResult, SessionSaveParams, SessionSaveResult, SplitPaneParams, SplitPaneResult,
+    WindowCreateParams, WindowCreateResult, WindowListResult,
 };
 
 /// Commands sent from the IPC server to the GPUI main thread.
@@ -29,8 +31,20 @@ pub enum IpcCommand {
         params: GetTextParams,
         reply: oneshot::Sender<anyhow::Result<GetTextResult>>,
     },
+    GetSelection {
+        params: GetSelectionParams,
+        reply: oneshot::Sender<anyhow::Result<GetSelectionResult>>,
+    },
+    GetSnapshot {
+        params: GetSnapshotParams,
+        reply: oneshot::Sender<anyhow::Result<GetSnapshotResult>>,
+    },
     ListPanes {
         reply: oneshot::Sender<anyhow::Result<ListPanesResult>>,
+    },
+    ResizePane {
+        params: ResizePaneParams,
+        reply: oneshot::Sender<anyhow::Result<()>>,
     },
     ActivatePane {
         params: ActivatePaneParams,
@@ -46,5 +60,13 @@ pub enum IpcCommand {
     },
     WindowList {
         reply: oneshot::Sender<anyhow::Result<WindowListResult>>,
+    },
+    SessionSave {
+        params: SessionSaveParams,
+        reply: oneshot::Sender<anyhow::Result<SessionSaveResult>>,
+    },
+    SessionLoad {
+        params: SessionLoadParams,
+        reply: oneshot::Sender<anyhow::Result<SessionLoadResult>>,
     },
 }

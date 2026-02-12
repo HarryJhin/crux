@@ -716,6 +716,11 @@ impl CruxTerminalView {
         self.terminal.size()
     }
 
+    /// Get the currently selected text, if any.
+    pub fn selection_to_string(&self) -> Option<String> {
+        self.terminal.selection_to_string()
+    }
+
     /// Get a snapshot of the terminal content (for cursor position, etc.).
     pub fn terminal_content_snapshot(&self) -> TerminalContent {
         self.terminal.content()

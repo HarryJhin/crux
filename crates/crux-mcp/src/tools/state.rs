@@ -100,14 +100,38 @@ impl CruxMcpServer {
     }
 
     /// Get the currently selected text in a terminal pane.
-    #[tool(description = "Get the currently selected text in a terminal pane (not yet supported)")]
+    #[tool(description = "Get the currently selected text in a terminal pane")]
     async fn crux_get_selection(
         &self,
-        Parameters(_params): Parameters<PaneIdParam>,
+        Parameters(params): Parameters<PaneIdParam>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(CallToolResult::success(vec![Content::text(
-            "selection retrieval is not yet supported",
-        )]))
+        let ipc = self.ipc.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            ipc.call(
+                crux_protocol::method::PANE_GET_SELECTION,
+                serde_json::json!({ "pane_id": params.pane_id }),
+            )
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
+        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+
+        let text = result
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let has_selection = result
+            .get("has_selection")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if has_selection {
+            Ok(CallToolResult::success(vec![Content::text(text)]))
+        } else {
+            Ok(CallToolResult::success(vec![Content::text(
+                "no text is currently selected",
+            )]))
+        }
     }
 
     /// Get scrollback buffer content from a terminal pane.

@@ -195,8 +195,26 @@ async fn dispatch_request(
             })
             .await
         }
+        method::PANE_GET_SELECTION => {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
+                IpcCommand::GetSelection { params, reply }
+            })
+            .await
+        }
+        method::PANE_GET_SNAPSHOT => {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
+                IpcCommand::GetSnapshot { params, reply }
+            })
+            .await
+        }
         method::PANE_LIST => {
             send_command(id.clone(), cmd_tx, |reply| IpcCommand::ListPanes { reply }).await
+        }
+        method::PANE_RESIZE => {
+            dispatch_with_params_unit(id.clone(), req.params, cmd_tx, |params, reply| {
+                IpcCommand::ResizePane { params, reply }
+            })
+            .await
         }
         method::PANE_ACTIVATE => {
             dispatch_with_params_unit(id.clone(), req.params, cmd_tx, |params, reply| {
@@ -218,6 +236,18 @@ async fn dispatch_request(
         }
         method::WINDOW_LIST => {
             send_command(id.clone(), cmd_tx, |reply| IpcCommand::WindowList { reply }).await
+        }
+        method::SESSION_SAVE => {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
+                IpcCommand::SessionSave { params, reply }
+            })
+            .await
+        }
+        method::SESSION_LOAD => {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
+                IpcCommand::SessionLoad { params, reply }
+            })
+            .await
         }
         _ => JsonRpcResponse::error(
             id,
