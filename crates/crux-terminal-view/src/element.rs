@@ -305,11 +305,24 @@ pub fn render_terminal_canvas(
             {
                 let cursor_row = content.cursor.point.line.0 as usize;
                 let cursor_col = content.cursor.point.column.0;
+
+                // Detect wide (CJK) characters: use 2x cell_width for the cursor.
+                let cursor_cell_idx = cursor_row * content.cols + cursor_col;
+                let is_wide = cursor_cell_idx < content.cells.len()
+                    && content.cells[cursor_cell_idx]
+                        .flags
+                        .contains(CellFlags::WIDE_CHAR);
+                let cursor_width = if is_wide {
+                    cell_width * 2.0
+                } else {
+                    cell_width
+                };
+
                 let cx_pos = point(
                     origin.x + cell_width * cursor_col as f32,
                     origin.y + cell_height * cursor_row as f32,
                 );
-                let cell_bounds = Bounds::new(cx_pos, size(cell_width, cell_height));
+                let cell_bounds = Bounds::new(cx_pos, size(cursor_width, cell_height));
 
                 match content.cursor.shape {
                     CursorShape::Block if focused => Some(fill(cell_bounds, cursor_color)),
@@ -323,7 +336,10 @@ pub fn render_terminal_canvas(
                     CursorShape::Underline => {
                         let underline_y = cx_pos.y + cell_height - px(2.0);
                         Some(fill(
-                            Bounds::new(point(cx_pos.x, underline_y), size(cell_width, px(2.0))),
+                            Bounds::new(
+                                point(cx_pos.x, underline_y),
+                                size(cursor_width, px(2.0)),
+                            ),
                             cursor_color,
                         ))
                     }
