@@ -82,8 +82,19 @@ pub fn render_terminal_canvas(
                         )
                     };
 
-                    let cell_fg_hsla = colors::color_to_hsla(cell_fg);
-                    let cell_bg_hsla = colors::color_to_hsla(cell_bg);
+                    let mut cell_fg_hsla = colors::color_to_hsla(cell_fg);
+                    let mut cell_bg_hsla = colors::color_to_hsla(cell_bg);
+
+                    // Handle INVERSE, HIDDEN, and DIM cell flags.
+                    if cell_flags.contains(CellFlags::INVERSE) {
+                        std::mem::swap(&mut cell_fg_hsla, &mut cell_bg_hsla);
+                    }
+                    if cell_flags.contains(CellFlags::HIDDEN) {
+                        cell_fg_hsla = cell_bg_hsla;
+                    }
+                    if cell_flags.contains(CellFlags::DIM) {
+                        cell_fg_hsla.l *= 0.66;
+                    }
 
                     // Merge horizontally adjacent cells with same non-default background.
                     if cell_bg_hsla != bg_color {
@@ -128,8 +139,14 @@ pub fn render_terminal_canvas(
                     }
 
                     // Check if this cell is part of the selection.
+                    // Use the cell's actual grid point when available for correct
+                    // coordinates with display_offset / scrollback.
                     if let Some(ref sel) = content.selection {
-                        let cell_point = Point::new(Line(row as i32), crux_terminal::Column(col));
+                        let cell_point = if cell_idx < content.cells.len() {
+                            content.cells[cell_idx].point
+                        } else {
+                            Point::new(Line(row as i32), crux_terminal::Column(col))
+                        };
                         if sel.contains(cell_point) {
                             selection_quads.push(fill(
                                 Bounds::new(

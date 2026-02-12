@@ -11,6 +11,17 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use crate::event::{CruxEventListener, SemanticZoneType, TerminalEvent};
 use crate::TerminalSize;
 
+/// Typed error for PTY spawn failures.
+#[derive(Debug, thiserror::Error)]
+pub enum PtyError {
+    #[error("failed to open PTY pair: {0}")]
+    OpenPty(#[source] anyhow::Error),
+    #[error("failed to spawn command: {0}")]
+    SpawnCommand(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("failed to get writer: {0}")]
+    GetWriter(#[source] anyhow::Error),
+}
+
 /// Check if a terminfo entry is available on the system.
 ///
 /// Searches the standard terminfo directories in order:
@@ -141,6 +152,7 @@ pub fn spawn_pty(
     }
 
     let child = pair.slave.spawn_command(cmd)?;
+    drop(pair.slave); // Must drop slave FD after spawn so reader gets EOF on child exit
     Ok((pair.master, child))
 }
 

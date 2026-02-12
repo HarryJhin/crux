@@ -78,9 +78,24 @@ impl EventListener for CruxEventListener {
             AlacEvent::Bell => Some(TerminalEvent::Bell),
             AlacEvent::PtyWrite(text) => Some(TerminalEvent::PtyWrite(text)),
             AlacEvent::ChildExit(code) => Some(TerminalEvent::ProcessExit(code)),
+            AlacEvent::ColorRequest(_idx, format_fn) => {
+                // Respond with a default color to prevent vim/neovim startup delays.
+                // Use black (0,0,0) as placeholder; a real theme system would
+                // supply actual palette colors.
+                let color_str = format_fn(alacritty_terminal::vte::ansi::Rgb { r: 0, g: 0, b: 0 });
+                Some(TerminalEvent::PtyWrite(color_str))
+            }
+            AlacEvent::ClipboardStore(_, content) => {
+                log::debug!("clipboard store request: {} bytes", content.len());
+                None
+            }
+            AlacEvent::ClipboardLoad(_, format_fn) => {
+                // Return empty string to prevent hangs from unanswered requests.
+                let response = format_fn("");
+                Some(TerminalEvent::PtyWrite(response))
+            }
             // Events we handle elsewhere or don't need yet:
-            // ClipboardStore, ClipboardLoad, ColorRequest, TextAreaSizeRequest,
-            // CursorBlinkingChange, MouseCursorDirty, ResetTitle, Exit
+            // TextAreaSizeRequest, CursorBlinkingChange, MouseCursorDirty, ResetTitle, Exit
             _ => None,
         };
 

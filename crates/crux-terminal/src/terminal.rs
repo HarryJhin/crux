@@ -148,8 +148,11 @@ impl CruxTerminal {
 
         let event_listener = CruxEventListener::new(event_tx.clone());
 
-        // Create alacritty_terminal Term with default config.
-        let config = Config::default();
+        // Create alacritty_terminal Term with scrollback config.
+        let config = Config {
+            scrolling_history: SCROLLBACK_LINES,
+            ..Config::default()
+        };
         let term = Term::new(config, &size, event_listener);
         let term = Arc::new(FairMutex::new(term));
 
@@ -201,10 +204,7 @@ impl CruxTerminal {
     pub fn resize(&mut self, size: TerminalSize) {
         self.size = size;
 
-        // Resize the alacritty terminal grid.
-        self.term.lock().resize(size);
-
-        // Resize the PTY so the child process gets SIGWINCH.
+        // Resize PTY first so the child process gets SIGWINCH before grid changes.
         if let Err(e) = self.master_pty.resize(portable_pty::PtySize {
             rows: size.rows as u16,
             cols: size.cols as u16,
@@ -213,6 +213,9 @@ impl CruxTerminal {
         }) {
             log::warn!("failed to resize PTY: {}", e);
         }
+
+        // Then resize the alacritty terminal grid.
+        self.term.lock().resize(size);
     }
 
     /// Access the terminal state under a lock.
@@ -265,36 +268,48 @@ impl CruxTerminal {
             }
         };
 
-        // Reset damage after capturing it.
-        term.reset_damage();
-
-        let content = term.renderable_content();
-
         let cols = term.columns();
         let rows = term.screen_lines();
 
-        let mut cells = Vec::with_capacity(cols * rows);
-        for Indexed { point, cell } in content.display_iter {
-            cells.push(IndexedCell {
-                point,
-                c: cell.c,
-                fg: cell.fg,
-                bg: cell.bg,
-                flags: cell.flags,
-            });
-        }
+        // Scope the immutable borrow from renderable_content() so we can
+        // call reset_damage() afterward.
+        let (cells, cursor, mode, display_offset, selection) = {
+            let content = term.renderable_content();
 
-        let cursor = CursorState {
-            point: content.cursor.point,
-            shape: content.cursor.shape,
+            let mut cells = Vec::with_capacity(cols * rows);
+            for Indexed { point, cell } in content.display_iter {
+                cells.push(IndexedCell {
+                    point,
+                    c: cell.c,
+                    fg: cell.fg,
+                    bg: cell.bg,
+                    flags: cell.flags,
+                });
+            }
+
+            let cursor = CursorState {
+                point: content.cursor.point,
+                shape: content.cursor.shape,
+            };
+
+            (
+                cells,
+                cursor,
+                content.mode,
+                content.display_offset,
+                content.selection,
+            )
         };
+
+        // Reset damage after all cell data has been copied.
+        term.reset_damage();
 
         TerminalContent {
             cells,
             cursor,
-            mode: content.mode,
-            display_offset: content.display_offset,
-            selection: content.selection,
+            mode,
+            display_offset,
+            selection,
             cols,
             rows,
             damage,

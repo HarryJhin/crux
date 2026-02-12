@@ -914,6 +914,7 @@ impl Render for CruxTerminalView {
             }
         }
         self.is_focused = focused;
+        self.terminal.with_term_mut(|t| t.is_focused = focused);
         let bell_active = self.is_bell_active();
         let cursor_visible = self.calculate_cursor_visible();
         self.cursor_blink_visible = cursor_visible;
@@ -924,7 +925,7 @@ impl Render for CruxTerminalView {
             DamageState::None => {}
         }
 
-        // Clear dirty flag after processing.
+        // Clear dirty flag now that we are rendering this frame.
         self.dirty = false;
 
         // Capture cell dimensions for the resize canvas.
