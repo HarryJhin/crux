@@ -651,7 +651,39 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
   - Categories: `build`, `test`, `error`, `wait_input`, `success`
   - Suggested next actions based on state
 
-### 5.5 MCP Security Configuration
+### 5.5 MCP Server — Testing Tools (crux-mcp Phase 3)
+
+7 testing-specific MCP tools enabling AI agents (Claude Code) to autonomously verify Crux's correctness. See [research/testing/ai-agent-testing.md](research/testing/ai-agent-testing.md) for full design.
+
+- [ ] `crux_inspect_cell` — single cell inspection (char, fg/bg RGB, flags)
+  - Row/col addressing (0-based, viewport-relative)
+  - Returns: char, width, fg/bg as `[r,g,b]`, bold/italic/underline/strikethrough flags
+- [ ] `crux_dump_grid` — full grid snapshot as structured JSON
+  - Optional region parameter for partial dumps
+  - Returns: 2D cell array, cursor position, scroll region, dimensions
+- [ ] `crux_get_terminal_modes` — terminal state machine query
+  - DEC modes: DECCKM, DECNKM, bracketed paste, mouse mode, origin, autowrap
+  - Charset: G0/G1 designation, active set
+  - Cursor style, window title, icon name
+- [ ] `crux_get_performance` — runtime performance metrics
+  - FPS (60-frame rolling average), frame time, input latency
+  - Scroll throughput (lines/sec), cell render time (μs)
+  - Memory usage
+- [ ] `crux_get_accessibility` — accessibility tree snapshot
+  - Role hierarchy, labels, values, plain text content per pane
+- [ ] `crux_subscribe_events` — event stream subscription
+  - Event types: input, output, resize, mode_change
+  - Timestamped events for replay testing
+- [ ] `crux_visual_hash` — perceptual hash of rendered output
+  - pHash for visual regression detection
+  - Returns hash + screenshot path + viewport metadata
+- [ ] Golden state test infrastructure:
+  - [ ] `tests/golden/*.json` — expected grid states for VT sequences
+  - [ ] `crux --test-mode` — hidden window + MCP server for CI
+  - [ ] `crux --headless` — VT logic only, no GPU rendering
+  - [ ] `scripts/run-tests.sh` — launch/connect/test/teardown harness
+
+### 5.6 MCP Security Configuration
 
 - [ ] Command whitelist/blocklist in `config.toml`:
   ```toml
@@ -665,7 +697,7 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - [ ] ANSI escape sanitization on output returned via MCP
 - [ ] Rate limiting for MCP tool calls
 
-### 5.6 Configuration System
+### 5.7 Configuration System
 
 #### Config File & Parsing
 - [ ] TOML configuration file (`~/.config/crux/config.toml`)
@@ -695,7 +727,7 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - [ ] On parse error: keep old config, show user-facing notification
 - [ ] Diff-based application — only re-render changed properties
 
-### 5.7 GUI Settings Window (⌘,)
+### 5.8 GUI Settings Window (⌘,)
 
 - [ ] Native settings window built with gpui-component widgets
 - [ ] Bidirectional sync: GUI edits → write TOML, TOML edits → update GUI
@@ -711,7 +743,7 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - [ ] "Open Config File" button — open TOML in user's editor
 - [ ] "Reset to Default" per section
 
-### 5.8 Polish
+### 5.9 Polish
 
 - [ ] Application icon and window chrome
 - [ ] macOS menu bar integration
@@ -723,8 +755,10 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - Claude Code Feature Request submitted with working demo
 - Crux CLI matches PaneBackend interface for seamless integration
 - **10 differentiation MCP tools leverage GPUI, IME, clipboard uniquely**
+- **7 testing MCP tools enable AI agent self-testing (37 total MCP tools)**
 - **MCP security configuration with command whitelist/blocklist**
 - **`crux_coordinate_panes` enables declarative multi-service orchestration**
+- Golden state test infrastructure with `--test-mode` and `--headless` flags
 - Full configuration system with TOML config + GUI settings window (⌘,) + hot reload
 - Production-ready terminal emulator
 
@@ -941,8 +975,9 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - [Key Mapping & Escape Sequences](research/keymapping-research.md)
 - [GPUI Project Bootstrap](research/gpui-bootstrap.md)
 
-### MCP Integration Research
+### MCP Integration & Testing Research
 - [MCP Integration Strategy](research/integration/mcp-integration.md) -- Protocol, SDK, 30 tools design, architecture
+- [AI Agent Testing Infrastructure](research/testing/ai-agent-testing.md) -- 7 testing MCP tools, self-testing, golden state, CI/CD
 - [Model Context Protocol Specification](https://modelcontextprotocol.io/specification/2025-11-25) -- Official spec
 - [rmcp (Official Rust MCP SDK)](https://github.com/modelcontextprotocol/rust-sdk) -- v0.15.0
 - [terminal-mcp](https://github.com/elleryfamilia/terminal-mcp) -- Reference terminal MCP implementation

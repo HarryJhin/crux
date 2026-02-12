@@ -1,6 +1,6 @@
 # Research Documentation Index
 
-> Crux 터미널 에뮬레이터 개발을 위한 기술 조사 문서 모음 (총 28편, ~780KB)
+> Crux 터미널 에뮬레이터 개발을 위한 기술 조사 문서 모음 (총 29편, ~810KB)
 >
 > 모든 문서는 YAML frontmatter를 포함하며, `phase`, `topics`, `related` 필드로 탐색 가능합니다.
 
@@ -40,6 +40,8 @@ research/
 ├── competitive/              ← ★ 경쟁 분석 (신규)
 │   ├── ghostty-warp-analysis.md  Ghostty 아키텍처 + Warp 대체 분석 + 포지셔닝
 │   └── terminal-structures.md    ★ 5대 터미널 프로젝트 구조 비교 (Alacritty/WezTerm/Rio/Ghostty/Zed)
+├── testing/                  ← ★ 테스팅 인프라 (신규)
+│   └── ai-agent-testing.md       AI 에이전트 테스팅: MCP 도구 7개, 셀프 테스팅, CI/CD
 └── platform/                 ← macOS 플랫폼 네이티브
     ├── ime-clipboard.md          한국어 IME, NSPasteboard, objc2, 드래그&드롭
     ├── homebrew-distribution.md  Homebrew, 코드 서명, 공증, Universal Binary
@@ -104,6 +106,11 @@ research/
 |----------|------------|
 | [platform/homebrew-distribution.md](platform/homebrew-distribution.md) | Formula/Cask, CI/CD, 코드 서명, 공증 |
 
+### Cross-Phase: Testing Infrastructure
+| Document | Key Topics |
+|----------|------------|
+| [testing/ai-agent-testing.md](testing/ai-agent-testing.md) | ★ AI 에이전트 테스팅: 7개 MCP 도구, 셀프 테스팅, golden state, CI/CD |
+
 ### Cross-Phase: Competitive Analysis
 | Document | Key Topics |
 |----------|------------|
@@ -139,6 +146,7 @@ research/
 | **쉘 통합 (OSC 133)** | [core/shell-integration.md](core/shell-integration.md) | [core/terminal-emulation.md](core/terminal-emulation.md) |
 | **설정 시스템** | [core/config-system.md](core/config-system.md) | — |
 | **테스트 전략** | [core/testing-strategy.md](core/testing-strategy.md) | [core/terminal-emulation.md](core/terminal-emulation.md) |
+| **AI 에이전트 테스팅** | [testing/ai-agent-testing.md](testing/ai-agent-testing.md) | [integration/mcp-integration.md](integration/mcp-integration.md) |
 | **폰트/CJK 폴백** | [core/font-system.md](core/font-system.md) | [platform/ime-clipboard.md](platform/ime-clipboard.md) |
 | **접근성 (VoiceOver)** | [core/accessibility.md](core/accessibility.md) | [gpui/framework.md](gpui/framework.md) |
 | **마우스 리포팅** | [core/mouse-reporting.md](core/mouse-reporting.md) | [core/keymapping.md](core/keymapping.md) |
@@ -195,6 +203,11 @@ competitive/ghostty-warp-analysis ★ ──► 전체 문서 참조
 competitive/terminal-structures ★ ──► core/terminal-architecture
                                  ──► core/performance
                                  ──► gpui/terminal-implementations
+
+testing/ai-agent-testing ★ ──► integration/mcp-integration
+                          ──► integration/claude-code-strategy
+                          ──► core/terminal-emulation
+                          ──► gpui/framework
 ```
 
 ---
@@ -204,6 +217,7 @@ competitive/terminal-structures ★ ──► core/terminal-architecture
 - **Integration 문서 4개의 계층**: `ipc-external-patterns.md`(외부 IPC 패턴 조사) → `ipc-protocol-design.md`(Crux IPC 설계) → `claude-code-strategy.md`(Claude Code 통합 전략) → `mcp-integration.md`(MCP 프로토콜 통합, AI 에이전트 도구 설계)
 - **IPC 문서 2개의 범위 차이**: `ipc-external-patterns.md`는 외부 터미널의 IPC 패턴(WezTerm 소스 레벨, JSON-RPC, 보안)을 다루고, `ipc-protocol-design.md`는 Crux 자체 프로토콜 설계를 다룹니다.
 - **GPUI 문서 4개의 계층**: `framework.md`(GPUI란 무엇인가) → `terminal-implementations.md`(다른 사람들은 어떻게 만들었나) → `bootstrap.md`(우리는 어떻게 시작하나) → `widgets-integration.md`(탭/패널을 어떻게 조합하나)
+- **testing/ 디렉토리 신규**: AI 에이전트 테스팅 인프라 문서. 7개 테스팅 MCP 도구, 셀프 테스팅 아키텍처, golden state 비교, CI/CD 4계층 전략, esctest2/vtebench/insta 통합.
 - **core/ 문서 확장**: 초기 4개 → 14개로 확장. 최근 그래픽스 프로토콜, tmux 호환성 문서 추가.
 - **competitive/ 디렉토리 확장**: Ghostty/Warp 분석에 이어 5대 터미널(Alacritty, WezTerm, Rio, Ghostty, Zed) 프로젝트 구조 비교 문서 추가. 크레이트 분리 전략, 렌더링 파이프라인, 성능 최적화 패턴의 횡단 비교 제공.
 - **gap-analysis.md**: 3차 업데이트 완료 (status: current). Critical 갭 해소율 79% (11/14).
