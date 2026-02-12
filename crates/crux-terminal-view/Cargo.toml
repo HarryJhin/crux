@@ -12,6 +12,7 @@ doctest = false
 gpui.workspace = true
 crux-terminal.workspace = true
 log.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 alacritty_terminal.workspace = true
