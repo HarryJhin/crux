@@ -21,5 +21,7 @@ actions!(
         FocusNextPane,
         FocusPrevPane,
         ZoomPane,
+        PrevPrompt,
+        NextPrompt,
     ]
 );

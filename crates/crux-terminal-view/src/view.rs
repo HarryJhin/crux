@@ -6,7 +6,7 @@ use gpui::*;
 
 use crux_terminal::{
     Column, CruxTerminal, DamageState, Dimensions, Line, Point, Scroll, Selection, SelectionType,
-    Side, TermMode, TerminalEvent, TerminalSize,
+    Side, TermMode, TerminalContent, TerminalEvent, TerminalSize,
 };
 
 use crate::element::render_terminal_canvas;
@@ -70,6 +70,16 @@ impl CruxTerminalView {
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
+        Self::new_with_options(None, None, None, cx)
+    }
+
+    /// Create a new terminal view with optional cwd, command, and env.
+    pub fn new_with_options(
+        cwd: Option<&str>,
+        command: Option<&[String]>,
+        env: Option<&std::collections::HashMap<String, String>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
 
         let terminal_font = font(FONT_FAMILY);
@@ -86,7 +96,8 @@ impl CruxTerminalView {
             cell_height: f32::from(cell_height),
         };
 
-        let terminal = CruxTerminal::new(None, size).expect("failed to create terminal");
+        let terminal =
+            CruxTerminal::new(None, size, cwd, command, env).expect("failed to create terminal");
 
         // Periodic refresh at ~60fps to pick up PTY output and handle cursor blink.
         cx.spawn(async |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
@@ -481,6 +492,10 @@ impl CruxTerminalView {
                     // CWD is stored internally by CruxTerminal::drain_events().
                     // The view layer can read it via terminal.cwd() when needed.
                 }
+                TerminalEvent::PromptMark { .. } => {
+                    // Prompt marks are stored internally by CruxTerminal::drain_events().
+                    // The view layer does not need to handle them.
+                }
             }
         }
         // Mark dirty if we received any events.
@@ -513,6 +528,71 @@ impl CruxTerminalView {
             sel.update(end, Side::Right);
             term.selection = Some(sel);
         });
+    }
+
+    /// Write data to the terminal's PTY.
+    pub fn write_to_pty(&mut self, data: &[u8]) {
+        self.terminal.write_to_pty(data);
+    }
+
+    /// Get terminal grid content as text lines.
+    pub fn get_text_lines(&self) -> Vec<String> {
+        let content = self.terminal.content();
+        let mut lines: Vec<String> = Vec::with_capacity(content.rows);
+        for row in 0..content.rows {
+            let mut line = String::new();
+            for cell in &content.cells {
+                if cell.point.line.0 == row as i32 {
+                    line.push(cell.c);
+                }
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        lines
+    }
+
+    /// Get the terminal size.
+    pub fn terminal_size(&self) -> TerminalSize {
+        self.terminal.size()
+    }
+
+    /// Get a snapshot of the terminal content (for cursor position, etc.).
+    pub fn terminal_content_snapshot(&self) -> TerminalContent {
+        self.terminal.content()
+    }
+
+    /// Scroll to the previous prompt (OSC 133 semantic zone).
+    pub fn scroll_to_prev_prompt(&mut self) {
+        let content = self.terminal.content();
+        let current_line = content.cursor.point.line.0 - content.display_offset as i32;
+
+        let zones = self.terminal.semantic_zones();
+        // Find the last prompt zone that starts before the current viewport line.
+        if let Some(zone) = zones.iter().rev().find(|z| {
+            z.zone_type == crux_terminal::SemanticZoneType::Prompt && z.start_line < current_line
+        }) {
+            let delta = current_line - zone.start_line;
+            if delta > 0 {
+                self.terminal.scroll_display(Scroll::Delta(delta));
+            }
+        }
+    }
+
+    /// Scroll to the next prompt (OSC 133 semantic zone).
+    pub fn scroll_to_next_prompt(&mut self) {
+        let content = self.terminal.content();
+        let current_line = content.cursor.point.line.0 - content.display_offset as i32;
+
+        let zones = self.terminal.semantic_zones();
+        // Find the first prompt zone that starts after the current viewport line.
+        if let Some(zone) = zones.iter().find(|z| {
+            z.zone_type == crux_terminal::SemanticZoneType::Prompt && z.start_line > current_line
+        }) {
+            let delta = zone.start_line - current_line;
+            if delta > 0 {
+                self.terminal.scroll_display(Scroll::Delta(-delta));
+            }
+        }
     }
 
     /// Returns true if we should notify GPUI for cursor blink animation.

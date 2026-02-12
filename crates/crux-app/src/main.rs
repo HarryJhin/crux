@@ -1,13 +1,26 @@
 mod actions;
 mod app;
+mod cli;
 mod dock;
 
+use clap::Parser;
 use gpui::*;
 
 fn main() {
     env_logger::init();
 
-    // Ensure xterm-crux terminfo is installed before starting the application.
+    let args = cli::CliArgs::parse();
+
+    // If a CLI subcommand was given, run it and exit.
+    if let Some(cli::commands::CliCommand::Cli { action }) = args.command {
+        if let Err(e) = run_cli(action) {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // Otherwise, start the GUI application.
     crux_terminal_view::ensure_terminfo_installed();
 
     let application = Application::new().with_assets(gpui_component_assets::Assets);
@@ -34,6 +47,8 @@ fn main() {
             KeyBinding::new("cmd-9", actions::SelectTab9, None),
             KeyBinding::new("cmd-]", actions::FocusNextPane, None),
             KeyBinding::new("cmd-[", actions::FocusPrevPane, None),
+            KeyBinding::new("cmd-up", actions::PrevPrompt, None),
+            KeyBinding::new("cmd-down", actions::NextPrompt, None),
         ]);
 
         cx.open_window(
@@ -51,4 +66,117 @@ fn main() {
         )
         .unwrap();
     });
+}
+
+fn run_cli(action: cli::commands::CliAction) -> anyhow::Result<()> {
+    use cli::commands::CliAction;
+    use crux_protocol::*;
+
+    let mut client = cli::client::connect()?;
+
+    match action {
+        CliAction::SplitPane {
+            direction,
+            percent,
+            pane_id,
+            cwd,
+            command,
+        } => {
+            let dir = match direction.as_str() {
+                "left" => SplitDirection::Left,
+                "top" => SplitDirection::Top,
+                "bottom" => SplitDirection::Bottom,
+                _ => SplitDirection::Right,
+            };
+            let params = SplitPaneParams {
+                target_pane_id: pane_id.map(PaneId),
+                direction: dir,
+                size: percent.map(SplitSize::Percent),
+                cwd,
+                command: if command.is_empty() {
+                    None
+                } else {
+                    Some(command)
+                },
+                env: None,
+            };
+            let result = client.call(method::PANE_SPLIT, serde_json::to_value(&params)?)?;
+            let result: SplitPaneResult = serde_json::from_value(result)?;
+            // Print new pane ID to stdout for scripting.
+            println!("{}", result.pane_id);
+        }
+
+        CliAction::SendText {
+            pane_id,
+            no_paste,
+            text,
+        } => {
+            let text = match text {
+                Some(t) => t,
+                None => {
+                    let mut buf = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+                    buf
+                }
+            };
+            let pane_id = pane_id
+                .or_else(|| std::env::var("CRUX_PANE").ok()?.parse().ok())
+                .map(PaneId);
+            let params = SendTextParams {
+                pane_id,
+                text,
+                bracketed_paste: !no_paste,
+            };
+            client.call(method::PANE_SEND_TEXT, serde_json::to_value(&params)?)?;
+        }
+
+        CliAction::GetText {
+            pane_id,
+            start_line,
+            end_line,
+            escapes,
+        } => {
+            let pane_id = pane_id
+                .or_else(|| std::env::var("CRUX_PANE").ok()?.parse().ok())
+                .map(PaneId);
+            let params = GetTextParams {
+                pane_id,
+                start_line,
+                end_line,
+                include_escapes: escapes,
+            };
+            let result = client.call(method::PANE_GET_TEXT, serde_json::to_value(&params)?)?;
+            let result: GetTextResult = serde_json::from_value(result)?;
+            for line in &result.lines {
+                println!("{line}");
+            }
+        }
+
+        CliAction::List { format } => {
+            let result = client.call(method::PANE_LIST, serde_json::json!({}))?;
+            let result: ListPanesResult = serde_json::from_value(result)?;
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(&result.panes)?);
+            } else {
+                cli::output::print_pane_table(&result.panes);
+            }
+        }
+
+        CliAction::ActivatePane { pane_id } => {
+            let params = ActivatePaneParams {
+                pane_id: PaneId(pane_id),
+            };
+            client.call(method::PANE_ACTIVATE, serde_json::to_value(&params)?)?;
+        }
+
+        CliAction::ClosePane { pane_id, force } => {
+            let params = ClosePaneParams {
+                pane_id: PaneId(pane_id),
+                force,
+            };
+            client.call(method::PANE_CLOSE, serde_json::to_value(&params)?)?;
+        }
+    }
+
+    Ok(())
 }
