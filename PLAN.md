@@ -233,52 +233,53 @@ libc = "0.2"
 
 ### 2.4 Shell Integration (OSC 133 & OSC 7)
 
-- [ ] OSC 133 (FinalTerm) prompt marking:
+- [x] OSC 133 (FinalTerm) prompt marking:
   - `\e]133;A\a` (prompt start), `\e]133;B\a` (command start)
   - `\e]133;C\a` (output start), `\e]133;D;exit_code\a` (command complete)
-  - Not supported by alacritty_terminal; byte-stream scanner infrastructure ready
+  - Byte-stream scanner in PTY read loop (alacritty_terminal does not handle OSC 133)
 - [x] OSC 7 CWD tracking: `\e]7;file://hostname/path\a`
   - Byte-stream scanner in PTY read loop, percent-decoding, CWD stored in CruxTerminal
 - [ ] Semantic zones: prompt, command, output regions
-- [ ] Smart navigation: jump between prompts (Cmd+Up/Down)
-- [ ] Shell integration scripts for zsh/bash/fish (bundled)
+- [x] Smart navigation: jump between prompts (Cmd+Up/Down)
+- [x] Shell integration scripts for zsh/bash/fish (bundled)
+  - Located in `extra/shell-integration/`
 
 ### 2.5 IPC Server (crux-ipc)
 
-- [ ] Unix domain socket server with `tokio::net::UnixListener`
-- [ ] Socket path: `$CRUX_SOCKET` or `$XDG_RUNTIME_DIR/crux/gui-sock-$PID`
-- [ ] Socket permissions: `0o600` (owner-only)
-- [ ] Peer credential verification (`UCred`)
-- [ ] JSON-RPC 2.0 message handling with length-prefix framing
-- [ ] Connection handshake (`crux:handshake`)
+- [x] Unix domain socket server with `tokio::net::UnixListener`
+- [x] Socket path: `$CRUX_SOCKET` or `$XDG_RUNTIME_DIR/crux/gui-sock-$PID`
+- [x] Socket permissions: `0o600` (owner-only)
+- [x] Peer credential verification (`UCred`)
+- [x] JSON-RPC 2.0 message handling with length-prefix framing
+- [x] Connection handshake (`crux:handshake`)
 
 ### 2.6 Crux Protocol -- Pane Control (P0)
 
-- [ ] `crux:pane/split` -- split pane, return new pane_id
-- [ ] `crux:pane/send-text` -- send text with optional bracketed paste
-- [ ] `crux:pane/get-text` -- capture pane content (with scrollback access)
-- [ ] `crux:pane/list` -- list all panes with metadata (JSON)
-- [ ] `crux:pane/activate` -- focus a pane
-- [ ] `crux:pane/close` -- close pane (graceful or forced)
+- [x] `crux:pane/split` -- split pane, return new pane_id
+- [x] `crux:pane/send-text` -- send text with optional bracketed paste
+- [x] `crux:pane/get-text` -- capture pane content (with scrollback access)
+- [x] `crux:pane/list` -- list all panes with metadata (JSON)
+- [x] `crux:pane/activate` -- focus a pane
+- [x] `crux:pane/close` -- close pane (graceful or forced)
 - [ ] `crux:window/create` -- new window
 - [ ] `crux:window/list` -- list windows
 
 ### 2.7 CLI Client
 
-- [ ] `crux cli` binary (same binary, subcommand)
-- [ ] Socket discovery: `$CRUX_SOCKET` -> runtime dir scan
-- [ ] `crux cli split-pane [--right|--left|--top|--bottom] [--percent N] [-- COMMAND]`
-- [ ] `crux cli send-text [--pane-id ID] [--no-paste] [TEXT]`
-- [ ] `crux cli get-text [--pane-id ID] [--start-line N] [--escapes]`
-- [ ] `crux cli list [--format table|json]`
-- [ ] `crux cli activate-pane --pane-id ID`
-- [ ] Stdin pipe support for `send-text`
-- [ ] Human-readable table output + JSON output
+- [x] `crux cli` binary (same binary, subcommand)
+- [x] Socket discovery: `$CRUX_SOCKET` -> runtime dir scan
+- [x] `crux cli split-pane [--right|--left|--top|--bottom] [--percent N] [-- COMMAND]`
+- [x] `crux cli send-text [--pane-id ID] [--no-paste] [TEXT]`
+- [x] `crux cli get-text [--pane-id ID] [--start-line N] [--escapes]`
+- [x] `crux cli list [--format table|json]`
+- [x] `crux cli activate-pane --pane-id ID`
+- [x] Stdin pipe support for `send-text`
+- [x] Human-readable table output + JSON output
 
 ### 2.8 Environment Variable Propagation
 
-- [ ] Set `CRUX_SOCKET` in all child PTY processes
-- [ ] Set `CRUX_PANE` to current pane ID in each PTY
+- [x] Set `CRUX_SOCKET` in all child PTY processes
+- [x] Set `CRUX_PANE` to current pane ID in each PTY
 
 ### 2.9 MCP Server — Core (crux-mcp)
 
