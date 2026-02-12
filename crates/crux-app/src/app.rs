@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use gpui::*;
@@ -7,7 +8,7 @@ use gpui_component::Placement;
 use tokio::sync::mpsc;
 
 use crux_ipc::IpcCommand;
-use crux_protocol::PaneId;
+use crux_protocol::{PaneEvent, PaneId};
 
 use crate::actions::*;
 use crate::dock::terminal_panel::CruxTerminalPanel;
@@ -19,7 +20,11 @@ pub struct CruxApp {
     /// Kept for socket cleanup on drop.
     _socket_path: Option<std::path::PathBuf>,
     pane_registry: HashMap<PaneId, Entity<CruxTerminalPanel>>,
-    next_pane_id: u64,
+    next_pane_id: AtomicU64,
+    /// Buffer of pane lifecycle events for future consumers (IPC notifications, etc.).
+    pane_events: Vec<PaneEvent>,
+    /// Tracks which pane was split from which parent pane.
+    pane_parents: HashMap<PaneId, PaneId>,
 }
 
 impl CruxApp {
@@ -58,7 +63,9 @@ impl CruxApp {
             ipc_rx,
             _socket_path: socket_path,
             pane_registry,
-            next_pane_id: 1,
+            next_pane_id: AtomicU64::new(1),
+            pane_events: Vec::new(),
+            pane_parents: HashMap::new(),
         }
     }
 
@@ -121,18 +128,55 @@ impl CruxApp {
                 area.add_panel(panel_view, DockPlacement::Center, None, window, cx);
             });
         }
+        self.emit_pane_event(PaneEvent::Created { pane_id });
     }
 
     fn action_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_active_tab(false, window, cx);
+    }
+
+    fn action_force_close_tab(
+        &mut self,
+        _: &ForceCloseTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_active_tab(true, window, cx);
+    }
+
+    fn close_active_tab(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab_panel) = self.focused_tab_panel(window, cx) else {
             return;
         };
+
+        let closing_pane_id = self.active_pane_id(window, cx);
+
+        if !force {
+            if let Some(pane_id) = closing_pane_id {
+                if let Some(panel) = self.pane_registry.get(&pane_id).cloned() {
+                    let running = panel.update(cx, |p, cx| p.is_process_running(cx));
+                    if running {
+                        log::warn!(
+                            "Tab has a running process (pane {}), use Cmd+Shift+W to force close",
+                            pane_id
+                        );
+                        return;
+                    }
+                }
+            }
+        }
 
         tab_panel.update(cx, |tp, cx| {
             if let Some(panel) = tp.active_panel(cx) {
                 tp.remove_panel(panel, window, cx);
             }
         });
+
+        if let Some(pane_id) = closing_pane_id {
+            self.pane_registry.remove(&pane_id);
+            self.pane_parents.remove(&pane_id);
+            self.emit_pane_event(PaneEvent::Closed { pane_id });
+        }
     }
 
     fn action_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -197,6 +241,9 @@ impl CruxApp {
             return;
         };
 
+        // Record the parent (the currently active pane being split from).
+        let parent_pane_id = self.active_pane_id(window, cx);
+
         let pane_id = self.allocate_pane_id();
         let panel = cx.new(|cx| CruxTerminalPanel::new(pane_id, None, None, None, window, cx));
         self.pane_registry.insert(pane_id, panel.clone());
@@ -205,6 +252,11 @@ impl CruxApp {
         tab_panel.update(cx, |tp, cx| {
             tp.add_panel_at(panel_view, placement, None, window, cx);
         });
+
+        if let Some(parent_id) = parent_pane_id {
+            self.pane_parents.insert(pane_id, parent_id);
+        }
+        self.emit_pane_event(PaneEvent::Created { pane_id });
     }
 
     fn action_zoom_pane(&mut self, _: &ZoomPane, window: &mut Window, cx: &mut Context<Self>) {
@@ -282,15 +334,51 @@ impl CruxApp {
         let target = &tab_panels[next_ix];
         let fh = target.read(cx).focus_handle(cx);
         fh.focus(window);
+
+        // Emit focused event for the newly focused pane.
+        if let Some(pane_id) = self.active_pane_id(window, cx) {
+            self.emit_pane_event(PaneEvent::Focused { pane_id });
+        }
     }
 
     // -- IPC integration ---------------------------------------------------
 
-    /// Allocate the next pane ID.
-    fn allocate_pane_id(&mut self) -> PaneId {
-        let id = PaneId(self.next_pane_id);
-        self.next_pane_id += 1;
-        id
+    /// Allocate the next pane ID (atomic, safe for future non-&mut-self use).
+    fn allocate_pane_id(&self) -> PaneId {
+        let id = self.next_pane_id.fetch_add(1, Ordering::Relaxed);
+        PaneId(id)
+    }
+
+    /// Push a pane lifecycle event into the buffer.
+    fn emit_pane_event(&mut self, event: PaneEvent) {
+        self.pane_events.push(event);
+    }
+
+    /// Drain all buffered pane events for consumption.
+    #[allow(dead_code)]
+    fn drain_pane_events(&mut self) -> Vec<PaneEvent> {
+        std::mem::take(&mut self.pane_events)
+    }
+
+    /// Get the parent pane that a given pane was split from.
+    #[allow(dead_code)]
+    fn pane_parent(&self, pane_id: PaneId) -> Option<PaneId> {
+        self.pane_parents.get(&pane_id).copied()
+    }
+
+    /// Get all panes that were split from a given parent pane.
+    #[allow(dead_code)]
+    fn pane_children(&self, pane_id: PaneId) -> Vec<PaneId> {
+        self.pane_parents
+            .iter()
+            .filter_map(|(child, parent)| {
+                if *parent == pane_id {
+                    Some(*child)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Poll the IPC command channel and dispatch commands.
@@ -340,6 +428,11 @@ impl CruxApp {
             }
 
             IpcCommand::SplitPane { params, reply } => {
+                // Determine the parent pane (target or currently active).
+                let parent_pane_id = params
+                    .target_pane_id
+                    .or_else(|| self.active_pane_id(window, cx));
+
                 let pane_id = self.allocate_pane_id();
                 let panel = cx.new(|cx| {
                     CruxTerminalPanel::new(
@@ -373,6 +466,11 @@ impl CruxApp {
                         tp.add_panel_at(panel_view, placement, None, window, cx);
                     });
                 }
+
+                if let Some(parent_id) = parent_pane_id {
+                    self.pane_parents.insert(pane_id, parent_id);
+                }
+                self.emit_pane_event(PaneEvent::Created { pane_id });
 
                 let size = panel.read(cx).terminal_view_size(cx);
                 let result = crux_protocol::SplitPaneResult {
@@ -472,7 +570,21 @@ impl CruxApp {
             }
 
             IpcCommand::ClosePane { params, reply } => {
-                if let Some(panel) = self.pane_registry.remove(&params.pane_id) {
+                if let Some(panel) = self.pane_registry.get(&params.pane_id).cloned() {
+                    // When force is false, check if the process is still running.
+                    if !params.force {
+                        let running = panel.update(cx, |p, cx| p.is_process_running(cx));
+                        if running {
+                            let _ = reply.send(Err(anyhow::anyhow!(
+                                "pane {} has a running process, use force: true to close",
+                                params.pane_id
+                            )));
+                            return;
+                        }
+                    }
+
+                    self.pane_registry.remove(&params.pane_id);
+                    self.pane_parents.remove(&params.pane_id);
                     let items = self.dock_area.read(cx).items().clone();
                     let tab_panels = Self::collect_tab_panels(&items);
                     let panel_view: Arc<dyn PanelView> = Arc::new(panel);
@@ -481,10 +593,35 @@ impl CruxApp {
                             tp.remove_panel(panel_view.clone(), window, cx);
                         });
                     }
+                    self.emit_pane_event(PaneEvent::Closed {
+                        pane_id: params.pane_id,
+                    });
                     let _ = reply.send(Ok(()));
                 } else {
                     let _ = reply.send(Err(anyhow::anyhow!("pane {} not found", params.pane_id)));
                 }
+            }
+
+            IpcCommand::WindowCreate { params: _, reply } => {
+                // Single-window mode: return the existing window.
+                let result = crux_protocol::WindowCreateResult {
+                    window_id: crux_protocol::WindowId(0),
+                };
+                let _ = reply.send(Ok(result));
+            }
+
+            IpcCommand::WindowList { reply } => {
+                let pane_count = self.pane_registry.len() as u32;
+                let window_info = crux_protocol::WindowInfo {
+                    window_id: crux_protocol::WindowId(0),
+                    title: "Crux".to_string(),
+                    pane_count,
+                    is_focused: true,
+                };
+                let result = crux_protocol::WindowListResult {
+                    windows: vec![window_info],
+                };
+                let _ = reply.send(Ok(result));
             }
         }
     }
@@ -561,6 +698,7 @@ impl Render for CruxApp {
             .size_full()
             .on_action(cx.listener(Self::action_new_tab))
             .on_action(cx.listener(Self::action_close_tab))
+            .on_action(cx.listener(Self::action_force_close_tab))
             .on_action(cx.listener(Self::action_next_tab))
             .on_action(cx.listener(Self::action_prev_tab))
             .on_action(cx.listener(Self::action_split_right))

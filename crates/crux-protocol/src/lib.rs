@@ -40,6 +40,19 @@ impl fmt::Display for TabId {
 }
 
 // ---------------------------------------------------------------------------
+// Pane events (for broadcasting lifecycle changes)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PaneEvent {
+    Created { pane_id: PaneId },
+    Closed { pane_id: PaneId },
+    Focused { pane_id: PaneId },
+    Resized { pane_id: PaneId, size: PaneSize },
+    TitleChanged { pane_id: PaneId, title: String },
+}
+
+// ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
 
@@ -230,6 +243,35 @@ pub struct ClosePaneParams {
     pub force: bool,
 }
 
+/// Parameters for `crux:window/create`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowCreateParams {
+    pub title: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+/// Result of `crux:window/create`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowCreateResult {
+    pub window_id: WindowId,
+}
+
+/// Info about a window, returned from `crux:window/list`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowInfo {
+    pub window_id: WindowId,
+    pub title: String,
+    pub pane_count: u32,
+    pub is_focused: bool,
+}
+
+/// Result of `crux:window/list`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowListResult {
+    pub windows: Vec<WindowInfo>,
+}
+
 /// Parameters for `crux:handshake`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeParams {
@@ -260,6 +302,8 @@ pub mod method {
     pub const PANE_LIST: &str = "crux:pane/list";
     pub const PANE_ACTIVATE: &str = "crux:pane/activate";
     pub const PANE_CLOSE: &str = "crux:pane/close";
+    pub const WINDOW_CREATE: &str = "crux:window/create";
+    pub const WINDOW_LIST: &str = "crux:window/list";
 }
 
 // ---------------------------------------------------------------------------
