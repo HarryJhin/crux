@@ -36,6 +36,8 @@ fn main() {
             KeyBinding::new("ctrl-shift-tab", actions::PrevTab, None),
             KeyBinding::new("cmd-d", actions::SplitRight, None),
             KeyBinding::new("cmd-shift-d", actions::SplitDown, None),
+            KeyBinding::new("cmd-ctrl-d", actions::WindowSplitRight, None),
+            KeyBinding::new("cmd-ctrl-shift-d", actions::WindowSplitDown, None),
             KeyBinding::new("cmd-shift-enter", actions::ZoomPane, None),
             KeyBinding::new("cmd-1", actions::SelectTab1, None),
             KeyBinding::new("cmd-2", actions::SelectTab2, None),

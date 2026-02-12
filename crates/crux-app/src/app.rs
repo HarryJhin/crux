@@ -236,6 +236,45 @@ impl CruxApp {
         self.split_pane(Placement::Bottom, window, cx);
     }
 
+    fn action_window_split_right(
+        &mut self,
+        _: &WindowSplitRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.window_split(Placement::Right, window, cx);
+    }
+
+    fn action_window_split_down(
+        &mut self,
+        _: &WindowSplitDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.window_split(Placement::Bottom, window, cx);
+    }
+
+    fn window_split(&mut self, placement: Placement, window: &mut Window, cx: &mut Context<Self>) {
+        let pane_id = self.allocate_pane_id();
+        let panel = cx.new(|cx| CruxTerminalPanel::new(pane_id, None, None, None, window, cx));
+        self.pane_registry.insert(pane_id, panel.clone());
+
+        let panel_view: Arc<dyn PanelView> = Arc::new(panel);
+        let dock_placement = match placement {
+            Placement::Right => DockPlacement::Right,
+            Placement::Bottom => DockPlacement::Bottom,
+            Placement::Left => DockPlacement::Left,
+            // DockArea has no Top placement; fall back to Bottom.
+            Placement::Top => DockPlacement::Bottom,
+        };
+
+        self.dock_area.update(cx, |area, cx| {
+            area.add_panel(panel_view, dock_placement, None, window, cx);
+        });
+
+        self.emit_pane_event(PaneEvent::Created { pane_id });
+    }
+
     fn split_pane(&mut self, placement: Placement, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab_panel) = self.focused_tab_panel(window, cx) else {
             return;
@@ -703,6 +742,8 @@ impl Render for CruxApp {
             .on_action(cx.listener(Self::action_prev_tab))
             .on_action(cx.listener(Self::action_split_right))
             .on_action(cx.listener(Self::action_split_down))
+            .on_action(cx.listener(Self::action_window_split_right))
+            .on_action(cx.listener(Self::action_window_split_down))
             .on_action(cx.listener(Self::action_zoom_pane))
             .on_action(cx.listener(Self::action_focus_next_pane))
             .on_action(cx.listener(Self::action_focus_prev_pane))

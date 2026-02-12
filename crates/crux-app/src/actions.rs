@@ -19,6 +19,8 @@ actions!(
         SelectTab9,
         SplitRight,
         SplitDown,
+        WindowSplitRight,
+        WindowSplitDown,
         FocusNextPane,
         FocusPrevPane,
         ZoomPane,
