@@ -1,18 +1,20 @@
 ---
 title: "Terminal Config System Design"
-description: "Configuration format comparison (TOML vs YAML vs KDL vs Lua), XDG-first file locations, hot-reload with notify crate, figment for layered config, schema validation, deprecated field handling"
+description: "Configuration format comparison (TOML vs YAML vs KDL vs Lua), XDG-first file locations, hot-reload with notify crate, figment for layered config, schema validation, deprecated field handling, GUI settings window architecture, bidirectional config sync, terminal settings UX patterns"
 date: 2026-02-12
 phase: [5]
-topics: [config, toml, hot-reload, settings]
+topics: [config, toml, hot-reload, settings, gui, gpui, preferences]
 status: final
 related:
   - terminal-architecture.md
+  - ../gpui/framework.md
+  - ../gpui/widgets-integration.md
 ---
 
 # Terminal Config System Design
 
 > 작성일: 2026-02-12
-> 목적: Crux 터미널의 설정 시스템 설계 — 포맷 선택, 파일 위치, 핫 리로드, 스키마 검증, 레이어드 설정
+> 목적: Crux 터미널의 설정 시스템 설계 — 포맷 선택, 파일 위치, 핫 리로드, 스키마 검증, 레이어드 설정, GUI 설정 창
 
 ---
 
@@ -27,6 +29,10 @@ related:
 7. [Deprecated Field Handling](#7-deprecated-field-handling)
 8. [Default Config Generation](#8-default-config-generation)
 9. [Crux Implementation Recommendations](#9-crux-implementation-recommendations)
+10. [GUI Settings Window Architecture](#10-gui-settings-window-architecture)
+11. [Terminal Settings UI Patterns](#11-terminal-settings-ui-patterns)
+12. [Bidirectional Config Sync](#12-bidirectional-config-sync)
+13. [Settings UX Components](#13-settings-ux-components)
 
 ---
 
@@ -695,3 +701,782 @@ notify = "7"
 - [Kitty Config Documentation](https://sw.kovidgoyal.net/kitty/conf/) — Example of custom format
 - [WezTerm Lua Config](https://wezfurlong.org/wezterm/config/files.html) — Lua-based config example
 - [Rio Configuration](https://raphamorim.io/rio/docs/configuration) — TOML config example
+
+---
+
+## 10. GUI Settings Window Architecture
+
+### Why Both GUI and TOML?
+
+| Approach | Pros | Cons | Terminals |
+|----------|------|------|-----------|
+| GUI only | Discoverable, beginner-friendly | Not version-controllable, opaque | iTerm2, Warp |
+| File only | Version-controllable, scriptable | Steep learning curve, no preview | Alacritty, Ghostty, WezTerm |
+| **GUI + File (bidirectional)** | **Best of both worlds** | Implementation complexity | **Crux**, VS Code |
+
+Crux's approach: **TOML is the single source of truth**. The GUI is a visual editor that reads and writes TOML. This means:
+- `dotfiles` repos, `chezmoi`, and team config sharing all work naturally
+- Power users edit TOML directly; GUI users never need to touch a file
+- No hidden state, no proprietary formats
+
+### GPUI Window Management
+
+GPUI supports multiple windows. The settings window is a secondary window opened via ⌘,:
+
+```rust
+use gpui::*;
+
+fn open_settings_window(cx: &mut AppContext) {
+    let bounds = Bounds::centered(None, size(px(720.), px(560.)), cx);
+
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Settings".into()),
+                ..Default::default()
+            }),
+            kind: WindowKind::Normal,
+            ..Default::default()
+        },
+        |cx| cx.new_view(|cx| SettingsWindow::new(cx)),
+    );
+}
+```
+
+macOS HIG requirements for the settings window:
+- **Non-modal**: Doesn't block main terminal window
+- **Singleton**: Only one instance at a time
+- **⌘,** shortcut: Standard macOS convention
+- **Minimize/maximize disabled but visible**: Traffic light buttons present but grayed
+- **Resizable**: With sensible min/max constraints (720×560 default)
+
+### Tab-Based Layout with gpui-component
+
+Using `gpui-component`'s `TabPanel` for settings categories:
+
+```rust
+use gpui::*;
+use gpui_component::tab::{Tab, TabPanel};
+
+struct SettingsWindow {
+    active_tab: SettingsTab,
+    config_model: Model<ConfigModel>,
+}
+
+#[derive(Clone, PartialEq)]
+enum SettingsTab {
+    General,
+    Appearance,
+    Terminal,
+    Keybindings,
+    Ime,
+    Mcp,
+}
+
+impl Render for SettingsWindow {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let config = self.config_model.read(cx);
+
+        v_flex()
+            .size_full()
+            .child(
+                // Toolbar-style tab bar (macOS HIG)
+                h_flex()
+                    .child(tab_button("General", SettingsTab::General, &self.active_tab, cx))
+                    .child(tab_button("Appearance", SettingsTab::Appearance, &self.active_tab, cx))
+                    .child(tab_button("Terminal", SettingsTab::Terminal, &self.active_tab, cx))
+                    .child(tab_button("Keybindings", SettingsTab::Keybindings, &self.active_tab, cx))
+                    .child(tab_button("IME", SettingsTab::Ime, &self.active_tab, cx))
+                    .child(tab_button("MCP", SettingsTab::Mcp, &self.active_tab, cx))
+            )
+            .child(
+                // Tab content
+                match self.active_tab {
+                    SettingsTab::General => self.render_general(config, cx),
+                    SettingsTab::Appearance => self.render_appearance(config, cx),
+                    SettingsTab::Terminal => self.render_terminal(config, cx),
+                    SettingsTab::Keybindings => self.render_keybindings(config, cx),
+                    SettingsTab::Ime => self.render_ime(config, cx),
+                    SettingsTab::Mcp => self.render_mcp(config, cx),
+                }
+            )
+    }
+}
+```
+
+### GPUI Data Binding Pattern
+
+GPUI uses `Model<T>` as the reactive state container. When the model is updated via `cx.notify()`, all views observing it re-render automatically:
+
+```rust
+pub struct ConfigModel {
+    config: AppConfig,
+}
+
+impl ConfigModel {
+    pub fn update_font_size(&mut self, size: f32, cx: &mut ModelContext<Self>) {
+        self.config.font.size = size;
+        cx.notify(); // Triggers re-render of all observing views
+    }
+}
+
+// In a settings view:
+fn render_font_size_slider(&self, config: &ConfigModel, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    let model = self.config_model.clone();
+
+    h_flex()
+        .child(label("Font Size"))
+        .child(
+            slider()
+                .min(6.0)
+                .max(72.0)
+                .value(config.config.font.size)
+                .on_change(move |value, cx| {
+                    model.update(cx, |m, cx| {
+                        m.update_font_size(value, cx);
+                    });
+                    // Also write to TOML file (debounced)
+                    schedule_config_write(cx);
+                })
+        )
+        .child(label(format!("{:.0}pt", config.config.font.size)))
+}
+```
+
+### Available gpui-component Widgets for Settings
+
+| Widget | Settings Use Case | gpui-component |
+|--------|-------------------|----------------|
+| `Slider` | Font size, opacity, scrollback | `slider()` |
+| `Switch` / `Toggle` | Cursor blink, ligatures, blur | `switch()` |
+| `Dropdown` / `Select` | Cursor style, shell, theme | `dropdown()` |
+| `TextInput` | Font family, shell path, socket path | `text_input()` |
+| `ColorPicker` | Foreground, background, ANSI colors | `color_picker()` |
+| `NumberInput` | Scrollback lines, line height | `number_input()` |
+| `Button` | Reset, Open Config File | `button()` |
+| `TabBar` / `Tab` | Settings categories | `TabBar::new()` |
+| `Settings` | **Complete multi-page settings UI** | `Settings::new()` |
+| `SettingPage` / `SettingGroup` / `SettingItem` | Settings structure | Part of Settings API |
+| `ScrollArea` | Long settings lists | `scroll_area()` |
+| `Divider` | Section separators | `divider()` |
+| `Label` | Setting names, descriptions | `label()` |
+
+### gpui-component Built-In Settings Widget
+
+The `gpui-component` crate provides a **complete `Settings` component** with sidebar navigation, grouping, and automatic field rendering. This is the recommended approach for fastest implementation:
+
+```rust
+use gpui_component::{Settings, SettingPage, SettingGroup, SettingItem, SettingField};
+
+Settings::new("crux-settings")
+    .pages(vec![
+        SettingPage::new("General")
+            .default_open(true)
+            .group(
+                SettingGroup::new()
+                    .title("Shell")
+                    .items(vec![
+                        SettingItem::new(
+                            "Default Shell",
+                            SettingField::dropdown(
+                                vec![("/bin/zsh", "zsh"), ("/bin/bash", "bash")],
+                                |cx| AppSettings::global(cx).shell.clone(),
+                                |val, cx| {
+                                    AppSettings::update(cx, |s| s.shell = val.to_string());
+                                },
+                            )
+                        ),
+                    ])
+            ),
+        SettingPage::new("Appearance")
+            .groups(vec![
+                SettingGroup::new()
+                    .title("Font")
+                    .items(vec![
+                        SettingItem::new(
+                            "Font Size",
+                            SettingField::number_input(
+                                NumberFieldOptions { min: 8.0, max: 72.0, step: 1.0, ..Default::default() },
+                                |cx| AppSettings::global(cx).font_size as f64,
+                                |val, cx| {
+                                    AppSettings::update(cx, |s| s.font_size = val as f32);
+                                    cx.emit(SettingsChanged::FontSize(val as f32));
+                                },
+                            )
+                        ),
+                        SettingItem::new(
+                            "Theme Color",
+                            SettingField::color_picker(
+                                |cx| AppSettings::global(cx).theme_color,
+                                |color, cx| {
+                                    AppSettings::update(cx, |s| s.theme_color = color);
+                                },
+                            )
+                        ),
+                    ]),
+            ]),
+    ])
+```
+
+This renders as a **macOS-style sidebar settings window** with automatic save/reset support.
+
+**Implementation approach comparison**:
+
+| Approach | Speed | Flexibility | macOS Native Feel |
+|----------|-------|-------------|-------------------|
+| `Settings` component | **Fast** (pre-built) | Limited | **Excellent** |
+| Custom `TabBar` + forms | Moderate | **Full control** | Good (manual work) |
+| Hybrid (Settings + custom tabs) | Moderate | Good | **Excellent** |
+
+**Recommendation**: Start with the `Settings` component for initial implementation, then customize or replace individual pages as needed.
+
+### Zed's Settings Architecture Lessons
+
+From [How We Rebuilt Settings in Zed](https://zed.dev/blog/settings-ui):
+
+1. **Files as the organizing principle**: Treat the config file structure (not UI abstractions) as the primary organizational structure. Settings UI maps directly to the TOML file sections.
+2. **Strongly-typed settings**: Use a single consolidated `CruxSettings` struct with `Global` trait, not scattered registrations.
+3. **Direct mapping**: Map setting types directly to UI controls without intermediate macro layers.
+
+```rust
+// Zed's approach: Type → UI control mapping
+// CruxSettings struct field → SettingField widget → config.toml section
+
+struct CruxSettings {
+    font: FontConfig,       // → SettingPage("Appearance") → [font] in TOML
+    terminal: TermConfig,   // → SettingPage("Terminal")   → [terminal] in TOML
+    window: WindowConfig,   // → SettingPage("Appearance") → [window] in TOML
+    shell: ShellConfig,     // → SettingPage("General")    → [shell] in TOML
+}
+```
+
+### GPUI Global Settings Pattern
+
+For settings that affect multiple windows (terminal view + settings window), use GPUI's `Global` trait:
+
+```rust
+use gpui::Global;
+
+impl Global for CruxSettings {}
+
+// Initialize at app startup
+cx.set_global(CruxSettings::load_from_toml());
+
+// Read from any window (lock-free)
+let settings = cx.global::<CruxSettings>();
+
+// Update from settings window (triggers re-render of all observers)
+cx.update_global::<CruxSettings, _>(|settings, _| {
+    settings.font.size = new_size;
+});
+```
+
+**Important GPUI 0.2.x API change**: The modern API passes `Window` and `Context<Self>` explicitly. The old `WindowContext` and `ViewContext<T>` types are deprecated:
+
+```rust
+// Correct (GPUI 0.2.x):
+impl Render for SettingsWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // ...
+    }
+}
+
+// Incorrect (old API):
+// fn render(&mut self, cx: &mut ViewContext<Self>) { ... }
+```
+
+---
+
+## 11. Terminal Settings UI Patterns
+
+### iTerm2: The Gold Standard
+
+iTerm2 uses a **two-tier hierarchy**: global settings + profile-specific settings.
+
+**Top-Level Tabs**: General, Appearance, Profiles, Keys, Arrangements, Advanced
+
+**Profile Subtabs**: General, Colors, Text, Window, Terminal, Session, Keys, Advanced
+
+**Key architectural features**:
+- **Profile inheritance**: Custom profiles inherit from Default, override only changed values
+- **Dynamic Profiles (JSON)**: Version-controllable profile definitions
+- **Non-modal window**: Settings stays open, changes apply immediately
+- **Search bar**: Full-text search across all preferences
+- **Profile tags**: Search/filter profiles by keywords
+
+**What to adopt for Crux**: Profile inheritance model, search across settings, non-modal window.
+
+### Warp: Modern UX
+
+**Approach**: Minimal, command-palette-driven settings.
+
+**Access**: ⌘, (traditional) + ⌘P command palette (search settings)
+
+**Settings Structure**: Appearance, Features, Session, Keybindings (only 4 categories)
+
+**Key patterns**:
+- Command palette searches settings as well as commands
+- Live theme preview with sample terminal output
+- Immediate apply (no Apply button)
+- Community theme gallery
+
+**What to adopt for Crux**: Command palette integration (⌘K), live theme preview, minimal category count.
+
+### VS Code: Dual GUI/JSON
+
+**Architecture**: GUI editor is a rendered view over `settings.json`. Both views show the same data.
+
+**Three-tier hierarchy**: Default (read-only) → User (`~/.config/Code/User/settings.json`) → Workspace (`.vscode/settings.json`)
+
+**Key features**:
+- `@modified` filter: Show only non-default settings
+- Blue vertical line: Visual indicator for modified settings
+- Gear icon per setting: Reset to default
+- Fuzzy search: Matches setting key, display name, description, enum values
+- Scope toggles: Switch between User/Workspace views
+
+**What to adopt for Crux**: `@modified` filter, per-setting reset icon, fuzzy search, blue modified indicator.
+
+### macOS Human Interface Guidelines
+
+Apple's HIG for Settings windows:
+
+| Guideline | Recommendation |
+|-----------|---------------|
+| Window title | "Settings" (modern macOS 13+) |
+| Shortcut | ⌘, (mandatory) |
+| Tab navigation | Toolbar-based icons (not NSTabView) |
+| Tab shortcuts | ⌘1 through ⌘9 |
+| Window behavior | Non-modal, singleton |
+| Traffic lights | Minimize/maximize disabled, not removed |
+| Tab icons | SF Symbols for consistency |
+| Nesting | Max 2 levels deep |
+| First tab | Always "General" |
+
+### Settings UI Comparison Matrix
+
+| Feature | iTerm2 | Warp | VS Code | **Crux (Planned)** |
+|---------|--------|------|---------|---------------------|
+| GUI settings | Yes | Yes | Yes | **Yes** |
+| Config file | plist (hidden) | Internal | JSON | **TOML (visible)** |
+| Bidirectional sync | No | No | Yes | **Yes** |
+| Search settings | Yes | Via palette | Yes | **Yes** |
+| Live preview | Partial | Themes only | No | **Yes** |
+| Profile inheritance | Yes | No | Workspace | **Yes** |
+| Modified indicator | No | No | Yes | **Yes** |
+| Per-setting reset | No | No | Yes | **Yes** |
+| Command palette | No | Yes | Yes | **Yes** |
+
+---
+
+## 12. Bidirectional Config Sync
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────┐
+│              ConfigManager (singleton)            │
+│  ┌───────────────────────────────────────────┐   │
+│  │   ArcSwap<AppConfig>  (source of truth)   │   │
+│  └───────────────────────────────────────────┘   │
+│         ↑ write              ↑ write             │
+│    ┌────┴─────┐        ┌────┴──────┐            │
+│    │ GUI Edit │        │ File Edit │            │
+│    │ (slider) │        │ (vim/code)│            │
+│    └────┬─────┘        └────┬──────┘            │
+│         │                    │                    │
+│    toml_edit              notify                  │
+│    write-back             watcher                 │
+│         ↓                    ↓                    │
+│    ┌─────────────────────────────────────┐       │
+│    │      config.toml (persistent)       │       │
+│    └─────────────────────────────────────┘       │
+└──────────────────────────────────────────────────┘
+```
+
+### toml_edit for Format-Preserving Writes
+
+The `toml` crate destroys comments and formatting on serialization. Use `toml_edit` instead:
+
+```rust
+use toml_edit::{DocumentMut, value};
+
+fn update_config_preserving_format(
+    config_path: &Path,
+    key: &str,
+    section: &str,
+    new_value: toml_edit::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let content = std::fs::read_to_string(config_path)?;
+    let mut doc = content.parse::<DocumentMut>()?;
+
+    // Update single value, preserving all comments and formatting
+    doc[section][key] = toml_edit::Item::Value(new_value);
+
+    std::fs::write(config_path, doc.to_string())?;
+    Ok(())
+}
+
+// Example: Update font size while keeping all comments intact
+update_config_preserving_format(
+    &config_path,
+    "size",
+    "font",
+    value(16.0),
+)?;
+```
+
+**Before** (user's hand-crafted config):
+```toml
+# My terminal config
+[font]
+family = "JetBrains Mono"  # Love this font
+size = 14.0                 # Default size
+ligatures = false
+```
+
+**After** (GUI changes font size to 16):
+```toml
+# My terminal config
+[font]
+family = "JetBrains Mono"  # Love this font
+size = 16.0                 # Default size
+ligatures = false
+```
+
+Comments, whitespace, and ordering are all preserved.
+
+**Crate comparison**:
+
+| Crate | Read | Write | Preserves Comments | Preserves Formatting |
+|-------|------|-------|--------------------|----------------------|
+| `toml` 0.8 | Yes | Yes | **No** | **No** |
+| `toml_edit` 0.23 | Yes | Yes | **Yes** | **Yes** |
+
+**Rule: Use `toml` for reading, `toml_edit` for writing.**
+
+### Preventing Write-Read Loops
+
+The critical problem: GUI writes → file watcher fires → GUI reloads → potential infinite loop.
+
+**Solution: Timestamp tracking**
+
+```rust
+use std::time::{Duration, SystemTime};
+use std::sync::Mutex;
+
+struct ConfigManager {
+    last_write_time: Mutex<Option<SystemTime>>,
+    config_path: PathBuf,
+}
+
+impl ConfigManager {
+    fn write_config(&self, config: &AppConfig) -> Result<()> {
+        let toml_str = self.serialize_preserving_format(config)?;
+        std::fs::write(&self.config_path, toml_str)?;
+
+        // Record when WE wrote the file
+        let metadata = std::fs::metadata(&self.config_path)?;
+        *self.last_write_time.lock().unwrap() = Some(metadata.modified()?);
+        Ok(())
+    }
+
+    fn on_file_changed(&self) -> Result<()> {
+        let metadata = std::fs::metadata(&self.config_path)?;
+        let file_mtime = metadata.modified()?;
+
+        let last_write = self.last_write_time.lock().unwrap();
+        if let Some(our_write_time) = *last_write {
+            // 200ms threshold accounts for filesystem timestamp granularity
+            if file_mtime <= our_write_time + Duration::from_millis(200) {
+                return Ok(()); // Our own write, ignore
+            }
+        }
+        drop(last_write);
+
+        // External modification — reload
+        self.reload_config_from_disk()?;
+        Ok(())
+    }
+}
+```
+
+**Alternative approaches**:
+
+| Strategy | Mechanism | Robustness |
+|----------|-----------|------------|
+| Timestamp tracking | Compare file mtime vs last write | **Best** (recommended) |
+| Generation counter | Atomic counter incremented on write | Good, but race-prone |
+| Ignore-next flag | AtomicBool set before write, cleared on event | Simple but fragile |
+
+### Conflict Resolution: GUI-Wins-During-Focus
+
+When the settings window is open and the file changes externally:
+
+```rust
+fn on_file_changed(&self) -> Result<()> {
+    let new_config = self.load_from_disk()?;
+
+    if self.settings_window_is_open() {
+        // Defer reload — show notification instead
+        self.pending_file_version = Some(new_config);
+        self.show_notification("Config file changed externally. Reload?");
+    } else {
+        // No settings window — auto-reload immediately
+        self.apply_config(new_config);
+    }
+    Ok(())
+}
+```
+
+**On parse error**: Always keep the old configuration. Show user-facing error notification. Never leave the terminal in a broken state.
+
+### State Management with GPUI Model
+
+```rust
+use gpui::*;
+use arc_swap::ArcSwap;
+
+pub struct ConfigModel {
+    config: AppConfig,
+    watcher_active: bool,
+}
+
+impl ConfigModel {
+    pub fn update_setting<F>(&mut self, updater: F, cx: &mut ModelContext<Self>)
+    where
+        F: FnOnce(&mut AppConfig),
+    {
+        updater(&mut self.config);
+        cx.notify(); // Re-render all observing views
+
+        // Debounced write to TOML (100ms after last change)
+        cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(Duration::from_millis(100)).await;
+            this.update(&mut cx, |this, _| {
+                this.write_to_disk();
+            }).ok();
+        }).detach();
+    }
+}
+```
+
+---
+
+## 13. Settings UX Components
+
+### Fuzzy Search
+
+Implement fzf-style fuzzy search across all settings:
+
+```
+Search scope: setting key + display label + description + enum values
+
+Example: typing "fosi" matches:
+  → font.size (key match)
+  → Font Size (label match)
+  → "Font size in points" (description match)
+
+Special filters:
+  @modified  — Show only non-default settings
+  @tab:appearance — Filter by tab
+```
+
+### Modified Indicator
+
+Visual indicator for settings that differ from their default value:
+
+```
+┌────────────────────────────────────────┐
+│ ▌ Font Size        [16    ] ←→   ⟲    │  ← Blue bar + reset icon
+│   Font Family      [Menlo         ▼]  │  ← No indicator (default)
+│ ▌ Ligatures        [✓]            ⟲    │  ← Modified
+│   Cursor Style     [Block         ▼]  │  ← Default
+└────────────────────────────────────────┘
+```
+
+- **Blue vertical bar**: Setting has been changed from default
+- **⟲ Reset icon**: Appears only on modified settings, click to restore default
+- **Bold label**: Optional, for emphasis on modified values
+
+### Font Preview Panel
+
+Terminal-specific font preview showing critical characters:
+
+```
+┌─ Font Settings ──────────────────────────┐
+│ Family: [JetBrains Mono           ▼]    │
+│ Size:   [14    ] ←─────────────→         │
+│ ☑ Enable ligatures                       │
+│                                          │
+│ Preview:                                 │
+│ ┌──────────────────────────────────────┐ │
+│ │ The quick brown fox jumps over 0O1l  │ │
+│ │ fn main() { println!("한글 테스트"); } │ │
+│ │ != => -> >= <= /* */ // ===           │ │
+│ │ ┌─┐ └─┘ ├─┤ ─── ═══                 │ │
+│ │     ⎇  λ  ∑  ∞                   │ │
+│ └──────────────────────────────────────┘ │
+└──────────────────────────────────────────┘
+```
+
+Preview includes:
+- Basic ASCII with commonly confused characters (0O, 1l, Il)
+- CJK characters (한글) to verify fallback chain
+- Programming ligatures (if enabled): `!=`, `=>`, `->`, `>=`
+- Box drawing characters: `┌─┐ └─┘ ├─┤`
+- Powerline/Nerd Font symbols: `  ⎇`
+- Unicode symbols: `λ ∑ ∞`
+
+### Color Scheme Editor
+
+```
+┌─ Colors ─────────────────────────────────┐
+│ Theme: [Tokyo Night          ▼]          │
+│                                          │
+│ ┌── Preview ───────────────────────────┐ │
+│ │ $ ls -la                             │ │
+│ │ drwxr-xr-x  user  Documents/        │ │
+│ │ -rw-r--r--  user  README.md          │ │
+│ │ $ git status                         │ │
+│ │ On branch main                       │ │
+│ │ Changes not staged:                  │ │
+│ │   modified: src/main.rs              │ │
+│ └──────────────────────────────────────┘ │
+│                                          │
+│ Foreground  [■ #c0caf5]                  │
+│ Background  [■ #1a1b26]                  │
+│ Cursor      [■ #c0caf5]                  │
+│ Selection   [■ #33467c]                  │
+│                                          │
+│ ANSI Colors:                             │
+│ Normal: ■ ■ ■ ■ ■ ■ ■ ■                 │
+│ Bright: ■ ■ ■ ■ ■ ■ ■ ■                 │
+│                                          │
+│ [Import Theme...] [Export Theme...]      │
+└──────────────────────────────────────────┘
+```
+
+Features:
+- Embedded terminal preview with curated sample output
+- Theme dropdown with instant live preview
+- Individual color wells for fine-tuning
+- Import/export in JSON, iTerm2, terminal.sexy formats
+- 16 ANSI color grid (8 normal + 8 bright)
+
+### Key Binding Recorder
+
+```
+┌─ Keybindings ────────────────────────────┐
+│ Search: [                           🔍]  │
+│                                          │
+│ Action              Keybinding    Reset  │
+│ ─────────────────────────────────────── │
+│ New Tab             ⌘T                   │
+│ Close Tab           ⌘W                   │
+│ Split Right         ⌘D            ⟲     │
+│ ▌Split Down         ⌘⇧D           ⟲     │  ← Modified
+│ Next Pane           ⌘]                   │
+│ Previous Pane       ⌘[                   │
+│                                          │
+│ ⚠ ⌘⇧D conflicts with "Bookmark" (built-in) │
+│   [Keep Both] [Replace "Bookmark"]       │
+└──────────────────────────────────────────┘
+```
+
+**Recording flow**:
+1. Click on keybinding cell → enters recording mode (cell highlights)
+2. Press desired key combination → display as `⌘⇧P`
+3. Check for conflicts against system, built-in, and custom bindings
+4. If conflict: show inline warning with resolution options
+5. ESC cancels recording
+
+**Conflict detection priority**:
+
+| Priority | Source | Override Allowed |
+|----------|--------|-----------------|
+| 1 (highest) | macOS system (⌘Q, ⌘W, ⌘⌥Esc) | No |
+| 2 | Built-in Crux bindings | Yes (with warning) |
+| 3 | User custom bindings | Yes |
+
+### IME Settings Tab
+
+```
+┌─ IME ────────────────────────────────────┐
+│ ☑ Enable Vim auto-switch                 │
+│   Switch to ASCII in Normal mode,        │
+│   restore in Insert mode                 │
+│                                          │
+│ Composition overlay style:               │
+│   ○ Inline (next to cursor)             │
+│   ● Floating (above cursor)             │
+│   ○ Status bar                           │
+│                                          │
+│ Input source for Normal mode:            │
+│   [ABC - English            ▼]           │
+│                                          │
+│ ☐ Show input source indicator            │
+└──────────────────────────────────────────┘
+```
+
+### MCP Security Tab
+
+```
+┌─ MCP Server ─────────────────────────────┐
+│ ☑ Enable MCP server                      │
+│                                          │
+│ Socket path: [~/.crux/mcp.sock     ]    │
+│                                          │
+│ Security policy:                         │
+│   ● Ask before executing commands        │
+│   ○ Allow all (trusted environment)      │
+│   ○ Read-only (inspection tools only)    │
+│                                          │
+│ Command whitelist:                       │
+│   [ls, cat, git, cargo, npm       ]     │
+│   (comma-separated, empty = allow all)   │
+│                                          │
+│ Blocked tools:                           │
+│   [crux_send_keys                  ]    │
+│   (comma-separated)                      │
+│                                          │
+│ Rate limit: [60    ] calls/minute        │
+└──────────────────────────────────────────┘
+```
+
+---
+
+## Additional Crate Dependencies (GUI Settings)
+
+```toml
+[dependencies]
+toml_edit = "0.23"     # Format-preserving TOML write-back
+arc-swap = "1.7"       # Lock-free config access
+notify-debouncer-mini = "0.5"  # Debounced file watching
+# gpui and gpui-component already in workspace
+```
+
+---
+
+## Additional Sources (GUI Settings)
+
+### Terminal Settings UX
+- [iTerm2 Preferences Documentation](https://iterm2.com/documentation-preferences.html) — Profile system, tab organization
+- [iTerm2 Dynamic Profiles](https://iterm2.com/documentation-dynamic-profiles.html) — JSON-based profile inheritance
+- [Warp Theme Design Blog](https://www.warp.dev/blog/how-we-designed-themes-for-the-terminal-a-peek-into-our-process) — Modern theme UX
+- [VS Code Settings Architecture](https://code.visualstudio.com/docs/getstarted/settings) — Dual GUI/JSON model, @modified filter
+- [macOS HIG: Settings](https://developer.apple.com/design/human-interface-guidelines/settings) — Apple guidelines for preferences windows
+
+### Bidirectional Sync
+- [toml_edit crate](https://crates.io/crates/toml_edit) — Format-preserving TOML manipulation
+- [toml_edit vs toml comparison](https://epage.github.io/blog/2023/01/toml-vs-toml-edit/) — When to use which
+- [arc-swap documentation](https://docs.rs/arc-swap/latest/arc_swap/) — Lock-free atomic pointer swap
+- [arc-swap patterns guide](https://docs.rs/arc-swap/latest/arc_swap/docs/patterns/index.html) — Observer and state patterns
+- [notify-debouncer-mini](https://docs.rs/notify-debouncer-mini/latest/notify_debouncer_mini/) — Debounced file watcher
+- [Runtime Configuration Reloading in Rust](https://vorner.github.io/2019/08/11/runtime-configuration-reloading.html) — arc-swap author's guide
+
+### GPUI
+- [GPUI Technical Overview](https://beckmoulton.medium.com/gpui-a-technical-overview-of-the-high-performance-rust-ui-framework-powering-zed-ac65975cda9f) — Model/View reactive architecture
+- [gpui-component crate](https://crates.io/crates/gpui-component) — 60+ widgets for settings UI
+- [Zed Editor Configuration](https://zed.dev/docs/configuring-zed) — Reference for GPUI-based settings

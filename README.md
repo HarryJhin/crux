@@ -19,6 +19,7 @@ No existing terminal satisfies all of these requirements simultaneously:
 | First-class Korean/CJK IME | △ | △ | △ | △ | **O** |
 | Binary clipboard input (images) | X | X | X | △ | **O** |
 | GPU-accelerated rendering | O | O | O | X | **O** |
+| TOML config + GUI settings + hot reload | X | △ | △ (Lua) | O (GUI only) | **O** |
 
 **Core problem**: AI coding tools like Claude Code Agent Teams need programmatic pane control (`split-pane`, `send-text`, `list`) to orchestrate multiple agent instances. Current solutions are either closed-source cloud platforms (Warp) or external MCP wrappers bolted onto terminals via AppleScript or tmux. **No terminal has a native MCP server built in.** Crux changes this — any MCP-compatible AI agent (Claude Desktop, Claude Code, Cursor, Windsurf) can control Crux directly with zero configuration.
 
@@ -74,11 +75,114 @@ No existing terminal satisfies all of these requirements simultaneously:
 - **Triple protocol** — MCP for AI agents + IPC for CLI/programmatic control + in-band escape sequences for PTY apps
 - **Custom OSC 7700-7799** namespace for Crux-specific extensions
 
+### Configuration
+- **TOML format** — type-safe, Rust-native, with typo detection (`deny_unknown_fields`)
+- **GUI settings** (⌘,) — visual settings editor powered by gpui-component widgets
+- **Bidirectional sync** — GUI edits write TOML, TOML edits update GUI in real-time
+- **Hot reload** — edit config, changes apply instantly (no restart)
+- **Live preview** — see font, color, and opacity changes as you adjust them
+- **XDG-first** — `~/.config/crux/config.toml` with macOS native fallback
+- **Layered merging** — CLI flags > env vars > config file > defaults
+- **CJK font fallback chain** — ordered fallback for Korean/Chinese/Japanese glyphs
+- **`crux --generate-config`** — annotated default config as documentation
+- **`crux --check-config`** — validate config without launching
+
 ### tmux Compatibility
 - Full VT100 feature set required by tmux
 - True color passthrough (`Tc` / `RGB` terminfo flags)
 - SGR mouse mode, bracketed paste, focus events
 - **tmux Control Mode** (`-CC`) integration (long-term goal)
+
+---
+
+## Configuration
+
+Crux uses **TOML** — the same format as `Cargo.toml`. Type-safe, human-readable, and catches typos at parse time. Both a **GUI settings window** (⌘,) and direct TOML editing are supported with bidirectional sync.
+
+### GUI Settings (⌘,)
+
+A native settings window built with gpui-component widgets. Every change is written back to `config.toml` — no hidden state, no proprietary format.
+
+| Tab | Settings |
+|-----|----------|
+| **General** | Shell, startup behavior, working directory |
+| **Appearance** | Font family/size, colors, theme, opacity, blur |
+| **Terminal** | Scrollback, cursor style/blink, mouse mode |
+| **Keybindings** | Visual key recorder, conflict detection |
+| **IME** | Input source, Vim auto-switch, composition overlay |
+| **MCP** | Security policy, allowed tools, socket path |
+
+Changes preview live as you adjust sliders and pickers — no "Apply" button needed.
+
+### Config File Location
+
+```
+~/.config/crux/config.toml          # XDG default (recommended)
+~/Library/Application Support/com.crux.terminal/config.toml  # macOS native
+```
+
+Override with environment variables: `CRUX_FONT_SIZE=16`, `CRUX_WINDOW_OPACITY=0.95`
+
+### Example
+
+```toml
+# ~/.config/crux/config.toml
+
+[font]
+family = "JetBrains Mono"
+size = 14.0
+ligatures = false
+
+[font.fallback]
+families = ["Apple SD Gothic Neo", "PingFang SC", "Noto Sans Mono CJK KR"]
+
+[colors]
+foreground = "#c0caf5"
+background = "#1a1b26"
+
+[terminal]
+scrollback_lines = 10000
+cursor_style = "block"       # block, underline, beam
+cursor_blink = false
+
+[shell]
+program = "/bin/zsh"
+args = ["-l"]
+integration = true           # OSC 7, OSC 133 shell integration
+
+[window]
+opacity = 1.0
+blur = false
+decorations = "full"         # full, none
+
+[[keybindings]]
+key = "n"
+mods = "super"
+action = "new_window"
+```
+
+### Hot Reload
+
+Most settings apply instantly when the config file is saved — no restart needed.
+
+| Hot Reloadable | Restart Required |
+|---------------|------------------|
+| Colors, themes | Scrollback size |
+| Font family/size | Shell program |
+| Cursor style/blink | Window decorations |
+| Window opacity | IPC socket path |
+| Keybindings | — |
+
+### Config Format Comparison
+
+| Terminal | Format | GUI Settings | Hot Reload | Typo Detection |
+|----------|--------|-------------|------------|----------------|
+| Alacritty | TOML | No | Yes | Partial |
+| Kitty | Custom `.conf` | No | Yes | No |
+| Ghostty | Custom `key=value` | No | Partial | No |
+| WezTerm | Lua (scripting) | No | Yes | Runtime errors |
+| iTerm2 | plist (hidden) | Yes (GUI only) | N/A | N/A |
+| **Crux** | **TOML** | **Yes (⌘, + bidirectional)** | **Yes** | **Yes** (`deny_unknown_fields`) |
 
 ---
 
@@ -193,6 +297,7 @@ flowchart LR
 | Unicode | `unicode-width` + `unicode-segmentation` | latest | wcwidth, grapheme clusters (UAX #29) |
 | Serialization | `serde` + `serde_json` | latest | JSON-RPC protocol |
 | Image | `image` + `base64` | latest | Kitty Graphics Protocol, clipboard images |
+| Config | `toml` + `notify` | 0.8 / 7 | TOML parsing, file watch for hot reload |
 | Text Shaping | CoreText (macOS native) | — | Font fallback, CJK glyph rendering |
 
 ---
@@ -372,7 +477,7 @@ Extensive technical research (~780KB, 28 documents) is available in [`research/`
 | Area | Key Documents |
 |------|--------------|
 | **GPUI Framework** | [framework.md](research/gpui/framework.md), [terminal-implementations.md](research/gpui/terminal-implementations.md), [bootstrap.md](research/gpui/bootstrap.md), [widgets-integration.md](research/gpui/widgets-integration.md) |
-| **Terminal Core** | [terminal-emulation.md](research/core/terminal-emulation.md), [terminal-architecture.md](research/core/terminal-architecture.md), [keymapping.md](research/core/keymapping.md), [terminfo.md](research/core/terminfo.md) |
+| **Terminal Core** | [terminal-emulation.md](research/core/terminal-emulation.md), [terminal-architecture.md](research/core/terminal-architecture.md), [keymapping.md](research/core/keymapping.md), [terminfo.md](research/core/terminfo.md), [config-system.md](research/core/config-system.md) |
 | **Integration** | [ipc-protocol-design.md](research/integration/ipc-protocol-design.md), [claude-code-strategy.md](research/integration/claude-code-strategy.md), [mcp-integration.md](research/integration/mcp-integration.md) |
 | **Platform** | [ime-clipboard.md](research/platform/ime-clipboard.md), [homebrew-distribution.md](research/platform/homebrew-distribution.md), [vim-ime-switching.md](research/platform/vim-ime-switching.md) |
 | **Competitive** | [ghostty-warp-analysis.md](research/competitive/ghostty-warp-analysis.md), [terminal-structures.md](research/competitive/terminal-structures.md) |

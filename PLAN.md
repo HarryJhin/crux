@@ -667,22 +667,54 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 
 ### 5.6 Configuration System
 
+#### Config File & Parsing
 - [ ] TOML configuration file (`~/.config/crux/config.toml`)
-- [ ] Font family, size, line height
+- [ ] XDG-first config discovery with macOS native fallback (`~/Library/Application Support/com.crux.terminal/`)
+- [ ] `deny_unknown_fields` — typo detection at parse time
+- [ ] Layered config merging: CLI flags > env vars (`CRUX_*`) > config file > built-in defaults
+- [ ] `crux --generate-config` — emit annotated default config
+- [ ] `crux --check-config` — validate config without launching
+- [ ] Deprecated field migration with versioned warnings
+
+#### Configurable Settings
+- [ ] Font family, size, line height, ligatures
+- [ ] CJK font fallback chain (`[font.fallback]`)
 - [ ] Color scheme / theme (16 ANSI + 256 palette + fg/bg/cursor)
 - [ ] Key bindings (customizable)
 - [ ] Scrollback size
-- [ ] Default shell
+- [ ] Default shell and args
 - [ ] IME settings (auto-switch enable/disable, preedit render mode)
 - [ ] Option key behavior (`option_as_alt`: left/right/both/none)
 - [ ] Ambiguous width preference
-- [ ] Window opacity, blur
+- [ ] Window opacity, blur, decorations
+- [ ] MCP security policy (allowed tools, command whitelist/blocklist)
 
-### 5.7 Polish
+#### Hot Reload
+- [ ] File system watcher via `notify` crate (watch parent directory for atomic saves)
+- [ ] 10ms debounce to prevent rapid successive reloads
+- [ ] On parse error: keep old config, show user-facing notification
+- [ ] Diff-based application — only re-render changed properties
+
+### 5.7 GUI Settings Window (⌘,)
+
+- [ ] Native settings window built with gpui-component widgets
+- [ ] Bidirectional sync: GUI edits → write TOML, TOML edits → update GUI
+- [ ] Tab-based layout:
+  - [ ] **General** — shell, startup behavior, working directory
+  - [ ] **Appearance** — font family/size picker, color picker, theme selector, opacity slider, blur toggle
+  - [ ] **Terminal** — scrollback, cursor style/blink, mouse mode
+  - [ ] **Keybindings** — visual key recorder, conflict detection, searchable list
+  - [ ] **IME** — input source, Vim auto-switch toggle, composition overlay style
+  - [ ] **MCP** — security policy, allowed tools, socket path
+- [ ] Live preview — changes apply in real-time as user adjusts settings
+- [ ] No "Apply" button — direct write to config.toml on every change
+- [ ] "Open Config File" button — open TOML in user's editor
+- [ ] "Reset to Default" per section
+
+### 5.8 Polish
 
 - [ ] Application icon and window chrome
 - [ ] macOS menu bar integration
-- [ ] Preferences window (GPUI-based)
 - [ ] About dialog with version info
 
 ### Milestone 5 Deliverable
@@ -693,7 +725,7 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - **10 differentiation MCP tools leverage GPUI, IME, clipboard uniquely**
 - **MCP security configuration with command whitelist/blocklist**
 - **`crux_coordinate_panes` enables declarative multi-service orchestration**
-- Full configuration system
+- Full configuration system with TOML config + GUI settings window (⌘,) + hot reload
 - Production-ready terminal emulator
 
 ---
