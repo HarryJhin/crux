@@ -113,6 +113,8 @@ pub struct CruxTerminal {
     reader_thread: Option<JoinHandle<()>>,
     event_rx: mpsc::Receiver<TerminalEvent>,
     size: TerminalSize,
+    /// Current working directory reported by the shell via OSC 7.
+    cwd: Option<String>,
 }
 
 impl CruxTerminal {
@@ -126,7 +128,7 @@ impl CruxTerminal {
         // Event channel for terminal → UI communication.
         let (event_tx, event_rx) = mpsc::channel();
 
-        let event_listener = CruxEventListener::new(event_tx);
+        let event_listener = CruxEventListener::new(event_tx.clone());
 
         // Create alacritty_terminal Term with default config.
         let config = Config::default();
@@ -141,8 +143,10 @@ impl CruxTerminal {
         let writer = master_pty.take_writer()?;
 
         // Start background PTY reader thread.
+        // The event_tx clone is used for OSC 7 (CWD) events that
+        // alacritty_terminal does not handle natively.
         let term_clone = term.clone();
-        let reader_thread = pty::start_pty_read_loop(term_clone, reader, || {
+        let reader_thread = pty::start_pty_read_loop(term_clone, reader, event_tx, || {
             // The wakeup callback is intentionally minimal.
             // In the GPUI integration layer, this will be replaced
             // with a cx.notify() call via the event channel.
@@ -156,6 +160,7 @@ impl CruxTerminal {
             reader_thread: Some(reader_thread),
             event_rx,
             size,
+            cwd: None,
         })
     }
 
@@ -275,12 +280,25 @@ impl CruxTerminal {
     }
 
     /// Drain pending events from the terminal.
-    pub fn drain_events(&self) -> Vec<TerminalEvent> {
+    ///
+    /// Also processes `CwdChanged` events internally to keep the
+    /// stored CWD up to date.
+    pub fn drain_events(&mut self) -> Vec<TerminalEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.event_rx.try_recv() {
+            if let TerminalEvent::CwdChanged(ref path) = event {
+                self.cwd = Some(path.clone());
+            }
             events.push(event);
         }
         events
+    }
+
+    /// Current working directory reported by the shell via OSC 7.
+    ///
+    /// Returns `None` if the shell has not yet reported a CWD.
+    pub fn cwd(&self) -> Option<&str> {
+        self.cwd.as_deref()
     }
 
     /// Get the current terminal size.

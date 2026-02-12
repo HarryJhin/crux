@@ -467,6 +467,10 @@ impl CruxTerminalView {
                     cx.quit();
                 }
                 TerminalEvent::Wakeup => {}
+                TerminalEvent::CwdChanged(_) => {
+                    // CWD is stored internally by CruxTerminal::drain_events().
+                    // The view layer can read it via terminal.cwd() when needed.
+                }
             }
         }
         // Mark dirty if we received any events.

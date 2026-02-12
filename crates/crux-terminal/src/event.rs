@@ -15,6 +15,11 @@ pub enum TerminalEvent {
     PtyWrite(String),
     /// Child process exited.
     ProcessExit(i32),
+    /// Shell reports current working directory (OSC 7).
+    ///
+    /// The payload is the decoded directory path (e.g. `/Users/jjh/Projects`).
+    /// Shells emit `ESC ] 7 ; file://hostname/path ST` after each command.
+    CwdChanged(String),
 }
 
 /// Bridges alacritty_terminal events into our channel-based system.
@@ -112,5 +117,14 @@ mod tests {
             rx.try_recv().is_err(),
             "no extra events should be in the channel"
         );
+    }
+
+    #[test]
+    fn test_cwd_changed_event() {
+        // CwdChanged is not produced by the EventListener bridge
+        // (it comes from the OSC 7 scanner in the PTY read loop),
+        // but verify the variant is constructible and matchable.
+        let event = TerminalEvent::CwdChanged("/Users/jjh".to_string());
+        assert!(matches!(event, TerminalEvent::CwdChanged(p) if p == "/Users/jjh"));
     }
 }
