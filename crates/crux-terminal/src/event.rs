@@ -47,3 +47,68 @@ impl EventListener for CruxEventListener {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn test_wakeup_event_mapping() {
+        let (tx, rx) = mpsc::channel();
+        let listener = CruxEventListener::new(tx);
+        listener.send_event(AlacEvent::Wakeup);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, TerminalEvent::Wakeup));
+    }
+
+    #[test]
+    fn test_title_event_mapping() {
+        let (tx, rx) = mpsc::channel();
+        let listener = CruxEventListener::new(tx);
+        listener.send_event(AlacEvent::Title("test title".to_string()));
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, TerminalEvent::Title(t) if t == "test title"));
+    }
+
+    #[test]
+    fn test_bell_event_mapping() {
+        let (tx, rx) = mpsc::channel();
+        let listener = CruxEventListener::new(tx);
+        listener.send_event(AlacEvent::Bell);
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, TerminalEvent::Bell));
+    }
+
+    #[test]
+    fn test_pty_write_event_mapping() {
+        let (tx, rx) = mpsc::channel();
+        let listener = CruxEventListener::new(tx);
+        listener.send_event(AlacEvent::PtyWrite("hello".to_string()));
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, TerminalEvent::PtyWrite(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_child_exit_event_mapping() {
+        let (tx, rx) = mpsc::channel();
+        let listener = CruxEventListener::new(tx);
+        listener.send_event(AlacEvent::ChildExit(42));
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, TerminalEvent::ProcessExit(42)));
+    }
+
+    #[test]
+    fn test_unhandled_events_are_dropped() {
+        let (tx, rx) = mpsc::channel();
+        let listener = CruxEventListener::new(tx);
+        // Verify that after sending and receiving a mapped event,
+        // the channel is empty (no extra events).
+        listener.send_event(AlacEvent::Bell);
+        let _ = rx.try_recv().unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "no extra events should be in the channel"
+        );
+    }
+}

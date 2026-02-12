@@ -25,16 +25,15 @@ tic -x -e xterm-crux,crux,crux-direct extra/crux.terminfo  # Compile terminfo
 Cargo workspace with `resolver = "2"`. Crate dependency graph (leaf → root):
 
 ```
-crux-protocol  (shared types, no internal deps)
+crux-terminal  (VT emulation: alacritty_terminal + portable-pty, no internal deps)
     ↓
-crux-terminal  (VT emulation: alacritty_terminal + portable-pty)
+crux-terminal-view  (GPUI canvas renderer: cell rendering, input encoding, cursor)
     ↓
-crux-terminal-view  (GPUI Element: cell rendering, IME overlay, cursor)
-    ↓
-crux-app  (main: window management, GPUI bootstrap, DockArea)
+crux-app  (main: GPUI bootstrap, window management)
 
-crux-ipc        (Unix socket server, JSON-RPC 2.0 — depends on crux-protocol)
-crux-clipboard  (NSPasteboard, drag-and-drop — depends on crux-protocol)
+crux-protocol   (shared types, no internal deps) [stub]
+crux-ipc        (Unix socket server, JSON-RPC 2.0 — depends on crux-protocol) [stub]
+crux-clipboard  (NSPasteboard, drag-and-drop) [stub]
 crux-mcp        (MCP server, 30 tools, rmcp SDK — depends on crux-protocol) [planned]
 crux-mcp-bridge (stdio ↔ Unix socket bridge for Claude Desktop) [planned]
 ```
@@ -46,16 +45,16 @@ All crates live under `crates/`. The root `Cargo.toml` is workspace-only.
 | Crate | Version | Notes |
 |-------|---------|-------|
 | `gpui` | `0.2.2` | From crates.io, NOT git. Pre-1.0 with breaking changes between versions |
-| `gpui-component` | `0.5.1` | DockArea, Tabs, ResizablePanel (60+ widgets) |
+| `gpui-component` | `0.5.1` | DockArea, Tabs, ResizablePanel — Phase 2 (not yet added) |
 | `alacritty_terminal` | `0.25` | VT100/xterm parser, grid, selection, damage tracking |
 | `portable-pty` | `0.9` | PTY creation and management |
-| `objc2` + `objc2-app-kit` | latest | NSTextInputClient (IME), NSPasteboard (clipboard) |
+| `objc2` + `objc2-app-kit` | latest | NSTextInputClient (IME), NSPasteboard — Phase 3 (not yet added) |
 
 ## Architecture Patterns
 
-- **Entity-View-Element**: GPUI's native pattern. `CruxTerminal` (entity/state) → `CruxTerminalView` (view/controller) → `CruxTerminalElement` (GPU renderer)
+- **Entity-View-Element**: GPUI's native pattern. `CruxTerminal` (entity/state) → `CruxTerminalView` (view/controller) → `render_terminal_canvas()` (canvas renderer)
 - **Damage tracking**: Only re-render changed cells. Inherited from `alacritty_terminal::TermDamage`
-- **Event batching**: Max 100 events or 4ms window before flush (Zed pattern)
+- **Event batching**: 4ms window or 4KB data threshold before wakeup flush (Zed-inspired pattern)
 - **Dual protocol**: IPC (Unix socket) for external control + in-band escape sequences (OSC/DCS/APC) for PTY apps
 - **Protocol namespace**: `crux:<domain>/<action>` over JSON-RPC 2.0
 
