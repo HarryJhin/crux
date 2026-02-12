@@ -4,11 +4,19 @@ use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
 
 use crate::server::CruxMcpServer;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SplitDirection {
+    Right,
+    Left,
+    Up,
+    Down,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct CreatePaneParams {
-    /// Split direction: right, left, top, bottom
-    #[schemars(description = "Split direction: right, left, top, bottom")]
-    pub direction: Option<String>,
+    /// Split direction: right, left, up, down
+    pub direction: Option<SplitDirection>,
     /// Working directory for the new pane
     pub cwd: Option<String>,
     /// Command to run in the new pane
@@ -54,8 +62,14 @@ impl CruxMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let ipc = self.ipc.clone();
         let result = tokio::task::spawn_blocking(move || {
+            let direction = match params.direction.unwrap_or(SplitDirection::Right) {
+                SplitDirection::Right => "right",
+                SplitDirection::Left => "left",
+                SplitDirection::Up => "up",
+                SplitDirection::Down => "down",
+            };
             let mut p = serde_json::json!({
-                "direction": params.direction.unwrap_or_else(|| "right".into()),
+                "direction": direction,
             });
             if let Some(cwd) = params.cwd {
                 p["cwd"] = serde_json::Value::String(cwd);
@@ -152,13 +166,13 @@ mod tests {
     #[test]
     fn test_create_pane_params_serde() {
         let params = CreatePaneParams {
-            direction: Some("right".into()),
+            direction: Some(SplitDirection::Right),
             cwd: Some("/tmp".into()),
             command: Some("ls".into()),
         };
         let json = serde_json::to_string(&params).unwrap();
         let parsed: CreatePaneParams = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.direction, Some("right".into()));
+        assert!(matches!(parsed.direction, Some(SplitDirection::Right)));
         assert_eq!(parsed.cwd, Some("/tmp".into()));
         assert_eq!(parsed.command, Some("ls".into()));
     }
@@ -175,6 +189,15 @@ mod tests {
         assert!(parsed.direction.is_none());
         assert!(parsed.cwd.is_none());
         assert!(parsed.command.is_none());
+    }
+
+    #[test]
+    fn test_split_direction_serde() {
+        let dir = SplitDirection::Up;
+        let json = serde_json::to_string(&dir).unwrap();
+        assert_eq!(json, "\"up\"");
+        let parsed: SplitDirection = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, SplitDirection::Up));
     }
 
     #[test]

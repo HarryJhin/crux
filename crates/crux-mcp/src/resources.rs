@@ -1,4 +1,5 @@
 use rmcp::model::*;
+use rmcp::ErrorData as McpError;
 
 use crate::ipc_client::IpcClient;
 
@@ -32,9 +33,14 @@ pub fn resource_templates() -> Vec<ResourceTemplate> {
 /// Parse a resource URI like "crux://pane/{id}/scrollback" or "crux://pane/{id}/state"
 pub fn parse_resource_uri(uri: &str) -> Option<(u64, &str)> {
     let rest = uri.strip_prefix("crux://pane/")?;
-    let (id_str, resource_type) = rest.split_once('/')?;
-    let id: u64 = id_str.parse().ok()?;
-    Some((id, resource_type))
+    let parts: Vec<&str> = rest.splitn(3, '/').collect();
+    match parts.as_slice() {
+        [id_str, resource_type] if !resource_type.is_empty() => {
+            let id: u64 = id_str.parse().ok()?;
+            Some((id, resource_type))
+        }
+        _ => None,
+    }
 }
 
 /// Read resource data from a pane via IPC.
@@ -42,7 +48,7 @@ pub fn read_resource_data(
     ipc: &IpcClient,
     pane_id: u64,
     resource_type: &str,
-) -> Result<ResourceContents, String> {
+) -> Result<ResourceContents, McpError> {
     match resource_type {
         "scrollback" => {
             let result = ipc
@@ -50,7 +56,7 @@ pub fn read_resource_data(
                     crux_protocol::method::PANE_GET_TEXT,
                     serde_json::json!({ "pane_id": pane_id }),
                 )
-                .map_err(|e| format!("IPC error: {e}"))?;
+                .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
 
             let text = if let Some(lines) = result.get("lines").and_then(|v| v.as_array()) {
                 lines
@@ -72,12 +78,12 @@ pub fn read_resource_data(
         "state" => {
             let result = ipc
                 .call(crux_protocol::method::PANE_LIST, serde_json::json!({}))
-                .map_err(|e| format!("IPC error: {e}"))?;
+                .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
 
             let panes = result
                 .get("panes")
                 .and_then(|v| v.as_array())
-                .ok_or("unexpected pane list format")?;
+                .ok_or_else(|| McpError::internal_error("unexpected pane list format", None))?;
 
             let pane = panes
                 .iter()
@@ -86,7 +92,9 @@ pub fn read_resource_data(
                         .and_then(|v| v.as_u64())
                         .is_some_and(|id| id == pane_id)
                 })
-                .ok_or(format!("pane {pane_id} not found"))?;
+                .ok_or_else(|| {
+                    McpError::resource_not_found(format!("pane {pane_id} not found"), None)
+                })?;
 
             let json = serde_json::to_string_pretty(pane).unwrap_or_else(|_| pane.to_string());
 
@@ -97,7 +105,10 @@ pub fn read_resource_data(
                 meta: None,
             })
         }
-        other => Err(format!("unknown resource type: {other}")),
+        other => Err(McpError::resource_not_found(
+            format!("unknown resource type: {other}"),
+            None,
+        )),
     }
 }
 
@@ -198,14 +209,14 @@ mod tests {
     #[test]
     fn test_parse_resource_uri_trailing_slash() {
         let result = parse_resource_uri("crux://pane/42/scrollback/");
-        // This should parse the resource_type as "scrollback/"
-        assert_eq!(result, Some((42, "scrollback/")));
+        // Trailing slash creates an extra segment, should be rejected
+        assert_eq!(result, None);
     }
 
     #[test]
     fn test_parse_resource_uri_extra_segments() {
         let result = parse_resource_uri("crux://pane/42/scrollback/extra");
-        // The parser splits on first '/', so resource_type will be "scrollback/extra"
-        assert_eq!(result, Some((42, "scrollback/extra")));
+        // Extra segments should be rejected
+        assert_eq!(result, None);
     }
 }

@@ -2,6 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
 
+use super::extract_lines;
 use crate::server::CruxMcpServer;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -117,18 +118,6 @@ impl CruxMcpServer {
         Ok(CallToolResult::success(vec![Content::text(
             "session save/restore is not yet supported",
         )]))
-    }
-}
-
-fn extract_lines(result: &serde_json::Value) -> String {
-    if let Some(lines) = result.get("lines").and_then(|v| v.as_array()) {
-        lines
-            .iter()
-            .filter_map(|l| l.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
     }
 }
 

@@ -2,6 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
 
+use super::extract_lines;
 use crate::server::CruxMcpServer;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -62,6 +63,17 @@ impl CruxMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let ipc = self.ipc.clone();
         let result = tokio::task::spawn_blocking(move || {
+            // Capture output before sending command to detect new output
+            let before = ipc.call(
+                crux_protocol::method::PANE_GET_TEXT,
+                serde_json::json!({ "pane_id": params.pane_id }),
+            )?;
+            let before_len = before
+                .get("lines")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+
             let send_params = serde_json::json!({
                 "pane_id": params.pane_id,
                 "text": format!("{}\n", params.command),
@@ -69,14 +81,32 @@ impl CruxMcpServer {
             });
             ipc.call(crux_protocol::method::PANE_SEND_TEXT, send_params)?;
 
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // Poll for new output with timeout
+            let timeout = std::time::Duration::from_millis(500);
+            let poll_interval = std::time::Duration::from_millis(50);
+            let start = std::time::Instant::now();
 
-            let get_params = serde_json::json!({ "pane_id": params.pane_id });
-            ipc.call(crux_protocol::method::PANE_GET_TEXT, get_params)
+            loop {
+                std::thread::sleep(poll_interval);
+
+                let after = ipc.call(
+                    crux_protocol::method::PANE_GET_TEXT,
+                    serde_json::json!({ "pane_id": params.pane_id }),
+                )?;
+                let after_len = after
+                    .get("lines")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+
+                if after_len > before_len || start.elapsed() >= timeout {
+                    return Ok(after);
+                }
+            }
         })
         .await
         .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        .map_err(|e: anyhow::Error| McpError::internal_error(format!("IPC error: {e}"), None))?;
 
         let output = extract_lines(&result);
         Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -179,22 +209,18 @@ impl CruxMcpServer {
                     for line in lines {
                         if let Some(s) = line.as_str() {
                             if re.is_match(s) {
-                                return Ok(serde_json::json!({
+                                return Ok(Some(serde_json::json!({
                                     "matched": true,
                                     "line": s,
                                     "elapsed_ms": start.elapsed().as_millis() as u64,
-                                }));
+                                })));
                             }
                         }
                     }
                 }
 
                 if start.elapsed() >= timeout {
-                    return Ok(serde_json::json!({
-                        "matched": false,
-                        "elapsed_ms": start.elapsed().as_millis() as u64,
-                        "error": "timeout waiting for pattern",
-                    }));
+                    return Ok(None);
                 }
 
                 std::thread::sleep(poll_interval);
@@ -204,9 +230,18 @@ impl CruxMcpServer {
         .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
         .map_err(|e: anyhow::Error| McpError::internal_error(format!("IPC error: {e}"), None))?;
 
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()),
-        )]))
+        match result {
+            Some(matched) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&matched).unwrap_or_else(|_| matched.to_string()),
+            )])),
+            None => {
+                let timeout_ms = params.timeout_ms.unwrap_or(10000);
+                Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Timeout after {}ms waiting for pattern '{}'",
+                    timeout_ms, params.pattern
+                ))]))
+            }
+        }
     }
 }
 
@@ -235,18 +270,6 @@ fn translate_keys(keys: &str) -> String {
         "page-up" => "\x1b[5~".to_string(),
         "page-down" => "\x1b[6~".to_string(),
         other => other.to_string(),
-    }
-}
-
-fn extract_lines(result: &serde_json::Value) -> String {
-    if let Some(lines) = result.get("lines").and_then(|v| v.as_array()) {
-        lines
-            .iter()
-            .filter_map(|l| l.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
     }
 }
 

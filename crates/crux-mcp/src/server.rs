@@ -59,6 +59,20 @@ impl ServerHandler for CruxMcpServer {
         }
     }
 
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        // TODO: query active panes via IPC and generate concrete resource URIs
+        // For now, return an empty list since we don't know active pane IDs without IPC
+        Ok(ListResourcesResult {
+            resources: vec![],
+            meta: None,
+            next_cursor: None,
+        })
+    }
+
     async fn list_resource_templates(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -88,8 +102,7 @@ impl ServerHandler for CruxMcpServer {
             crate::resources::read_resource_data(&ipc, pane_id, &resource_type)
         })
         .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(e, None))?;
+        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))??;
 
         Ok(ReadResourceResult {
             contents: vec![contents],
