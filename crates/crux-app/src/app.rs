@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use gpui::*;
-use gpui_component::dock::{DockArea, DockItem, DockPlacement, PanelView, TabPanel, ToggleZoom};
+use gpui_component::dock::{DockArea, DockAreaState, DockItem, DockPlacement, PanelView, StackPanel, TabPanel, ToggleZoom};
 use gpui_component::Placement;
 
 use crux_ipc::IpcCommand;
@@ -599,6 +599,40 @@ impl CruxApp {
                 }
             }
 
+            IpcCommand::GetSelection { params, reply } => {
+                let pane_id = params.pane_id.or_else(|| self.active_pane_id(window, cx));
+
+                if let Some(id) = pane_id {
+                    if let Some(panel) = self.pane_registry.get(&id) {
+                        let text = panel.read(cx).get_selection(cx);
+                        let result = crux_protocol::GetSelectionResult {
+                            has_selection: text.is_some(),
+                            text,
+                        };
+                        let _ = reply.send(Ok(result));
+                    } else {
+                        let _ = reply.send(Err(anyhow::anyhow!("pane {} not found", id)));
+                    }
+                } else {
+                    let _ = reply.send(Err(anyhow::anyhow!("no active pane")));
+                }
+            }
+
+            IpcCommand::GetSnapshot { params, reply } => {
+                let pane_id = params.pane_id.or_else(|| self.active_pane_id(window, cx));
+
+                if let Some(id) = pane_id {
+                    if let Some(panel) = self.pane_registry.get(&id) {
+                        let result = panel.read(cx).get_snapshot(cx);
+                        let _ = reply.send(Ok(result));
+                    } else {
+                        let _ = reply.send(Err(anyhow::anyhow!("pane {} not found", id)));
+                    }
+                } else {
+                    let _ = reply.send(Err(anyhow::anyhow!("no active pane")));
+                }
+            }
+
             IpcCommand::ListPanes { reply } => {
                 let panes: Vec<crux_protocol::PaneInfo> = self
                     .pane_registry
@@ -628,6 +662,11 @@ impl CruxApp {
                     })
                     .collect();
                 let _ = reply.send(Ok(crux_protocol::ListPanesResult { panes }));
+            }
+
+            IpcCommand::ResizePane { params, reply } => {
+                let result = self.handle_resize_pane(params.pane_id, params.width, params.height, window, cx);
+                let _ = reply.send(result);
             }
 
             IpcCommand::ActivatePane { params, reply } => {
@@ -694,6 +733,16 @@ impl CruxApp {
                 };
                 let _ = reply.send(Ok(result));
             }
+
+            IpcCommand::SessionSave { params, reply } => {
+                let result = self.handle_session_save(params.path, cx);
+                let _ = reply.send(result);
+            }
+
+            IpcCommand::SessionLoad { params, reply } => {
+                let result = self.handle_session_load(params.path, window, cx);
+                let _ = reply.send(result);
+            }
         }
     }
 
@@ -718,6 +767,98 @@ impl CruxApp {
             fh.contains_focused(window, cx)
         } else {
             false
+        }
+    }
+
+    /// Handle a pane resize request by navigating the DockItem tree to find
+    /// the StackPanel that contains the target pane and resizing it.
+    fn handle_resize_pane(
+        &self,
+        pane_id: PaneId,
+        width: Option<f32>,
+        height: Option<f32>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> anyhow::Result<()> {
+        if width.is_none() && height.is_none() {
+            return Err(anyhow::anyhow!("at least one of width or height must be specified"));
+        }
+
+        let panel_entity = self.pane_registry.get(&pane_id)
+            .ok_or_else(|| anyhow::anyhow!("pane {} not found", pane_id))?;
+        let target_view: Arc<dyn PanelView> = Arc::new(panel_entity.clone());
+
+        let items = self.dock_area.read(cx).items().clone();
+
+        // Try width resize (horizontal split axis)
+        if let Some(w) = width {
+            if let Some((stack_panel, ix)) = Self::find_stack_panel_containing(&items, &target_view, cx) {
+                stack_panel.update(cx, |sp, cx| {
+                    sp.resize_panel_at(ix, px(w), window, cx);
+                });
+            }
+        }
+
+        // Try height resize (vertical split axis)
+        if let Some(h) = height {
+            if let Some((stack_panel, ix)) = Self::find_stack_panel_containing(&items, &target_view, cx) {
+                stack_panel.update(cx, |sp, cx| {
+                    sp.resize_panel_at(ix, px(h), window, cx);
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Walk the DockItem tree to find which StackPanel (DockItem::Split) contains
+    /// a TabPanel that holds the target pane. Returns the StackPanel entity and the
+    /// index of the child item within it.
+    fn find_stack_panel_containing(
+        item: &DockItem,
+        target: &Arc<dyn PanelView>,
+        cx: &App,
+    ) -> Option<(Entity<StackPanel>, usize)> {
+        match item {
+            DockItem::Split { items, view, .. } => {
+                // Check each child to see if it contains the target pane.
+                for (ix, child) in items.iter().enumerate() {
+                    if Self::dock_item_contains_pane(child, target, cx) {
+                        // If the child directly contains the pane (e.g. it's a Tabs),
+                        // return this split + index.
+                        match child {
+                            DockItem::Tabs { .. } | DockItem::Panel { .. } => {
+                                return Some((view.clone(), ix));
+                            }
+                            DockItem::Split { .. } => {
+                                // Recurse into nested splits — the pane might be deeper.
+                                if let Some(result) = Self::find_stack_panel_containing(child, target, cx) {
+                                    return Some(result);
+                                }
+                                // If not found deeper, the target is directly in this split.
+                                return Some((view.clone(), ix));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if a DockItem (recursively) contains the target pane view.
+    fn dock_item_contains_pane(item: &DockItem, target: &Arc<dyn PanelView>, _cx: &App) -> bool {
+        match item {
+            DockItem::Tabs { items, .. } => {
+                items.iter().any(|panel| panel.view() == target.view())
+            }
+            DockItem::Split { items, .. } => {
+                items.iter().any(|child| Self::dock_item_contains_pane(child, target, _cx))
+            }
+            DockItem::Panel { view, .. } => view.view() == target.view(),
+            _ => false,
         }
     }
 
@@ -757,6 +898,107 @@ impl CruxApp {
 
         // Fallback to the focused tab panel.
         self.focused_tab_panel(window, cx)
+    }
+
+    // -- Session save/load -------------------------------------------------
+
+    /// Default session file path: `~/.config/crux/session.json`.
+    fn default_session_path() -> std::path::PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(home)
+            .join(".config")
+            .join("crux")
+            .join("session.json")
+    }
+
+    /// Save the current DockArea layout to a JSON file.
+    fn handle_session_save(
+        &self,
+        path: Option<String>,
+        cx: &App,
+    ) -> anyhow::Result<crux_protocol::SessionSaveResult> {
+        let file_path = match path {
+            Some(p) => std::path::PathBuf::from(p),
+            None => Self::default_session_path(),
+        };
+
+        let state = self.dock_area.read(cx).dump(cx);
+        let json = serde_json::to_string_pretty(&state)?;
+
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&file_path, json)?;
+
+        log::info!("Session saved to {}", file_path.display());
+        Ok(crux_protocol::SessionSaveResult {
+            path: file_path.to_string_lossy().to_string(),
+        })
+    }
+
+    /// Load a DockArea layout from a JSON file and reconstruct panels.
+    fn handle_session_load(
+        &mut self,
+        path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<crux_protocol::SessionLoadResult> {
+        let file_path = match path {
+            Some(p) => std::path::PathBuf::from(p),
+            None => Self::default_session_path(),
+        };
+
+        let json = std::fs::read_to_string(&file_path)?;
+        let state: DockAreaState = serde_json::from_str(&json)?;
+
+        self.dock_area.update(cx, |area, cx| {
+            area.load(state, window, cx)
+        })?;
+
+        // Re-populate pane_registry by walking the new DockItem tree.
+        self.pane_registry.clear();
+        self.pane_parents.clear();
+        let items = self.dock_area.read(cx).items().clone();
+        self.collect_panes_from_dock_item(&items, cx);
+
+        // Set next_pane_id to max+1.
+        let max_id = self.pane_registry.keys().map(|id| id.0).max().unwrap_or(0);
+        self.next_pane_id.store(max_id + 1, Ordering::Relaxed);
+
+        let pane_count = self.pane_registry.len() as u32;
+        log::info!(
+            "Session loaded from {} ({} panes)",
+            file_path.display(),
+            pane_count
+        );
+        Ok(crux_protocol::SessionLoadResult { pane_count })
+    }
+
+    /// Walk the DockItem tree and collect all CruxTerminalPanel entities
+    /// into the pane_registry.
+    fn collect_panes_from_dock_item(&mut self, item: &DockItem, cx: &App) {
+        match item {
+            DockItem::Tabs { items, .. } => {
+                for panel_view in items {
+                    if let Ok(terminal_panel) = panel_view.view().downcast::<CruxTerminalPanel>() {
+                        let pane_id = terminal_panel.read(cx).pane_id();
+                        self.pane_registry.insert(pane_id, terminal_panel);
+                    }
+                }
+            }
+            DockItem::Split { items, .. } => {
+                for child in items {
+                    self.collect_panes_from_dock_item(child, cx);
+                }
+            }
+            DockItem::Panel { view, .. } => {
+                if let Ok(terminal_panel) = view.view().downcast::<CruxTerminalPanel>() {
+                    let pane_id = terminal_panel.read(cx).pane_id();
+                    self.pane_registry.insert(pane_id, terminal_panel);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -812,15 +1054,33 @@ impl Render for CruxApp {
 
 impl Drop for CruxApp {
     fn drop(&mut self) {
-        // Clean up MCP server process.
         if let Some(mut child) = self.mcp_process.take() {
-            log::info!("Terminating MCP server (PID {})...", child.id());
-
-            // Attempt graceful termination, then force kill if needed.
+            let pid = child.id();
+            log::info!("Terminating MCP server (PID {pid})...");
+            // Step 1: Send SIGTERM for graceful shutdown
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            // Step 2: Wait up to 2 seconds
+            for _ in 0..40 {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        log::info!("MCP server exited gracefully: {status}");
+                        return;
+                    }
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                    Err(e) => {
+                        log::warn!("Failed to check MCP server status: {e}");
+                        break;
+                    }
+                }
+            }
+            // Step 3: Force kill
+            log::warn!("MCP server did not exit gracefully, sending SIGKILL");
             let _ = child.kill();
             match child.wait() {
-                Ok(status) => log::info!("MCP server exited with status: {}", status),
-                Err(e) => log::warn!("Failed to wait for MCP server exit: {}", e),
+                Ok(status) => log::info!("MCP server force-killed: {status}"),
+                Err(e) => log::warn!("Failed to wait for MCP server: {e}"),
             }
         }
     }

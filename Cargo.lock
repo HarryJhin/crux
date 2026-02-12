@@ -1427,6 +1427,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gpui-component-assets",
+ "libc",
  "log",
  "serde_json",
  "tokio",
