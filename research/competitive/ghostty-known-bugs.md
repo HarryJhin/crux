@@ -1,6 +1,6 @@
 ---
 title: "Ghostty Lessons Learned: Known Bugs and Issues to Avoid"
-description: "Comprehensive analysis of Ghostty terminal emulator bugs, issues, and design decisions that inform Crux development strategy"
+description: "Comprehensive analysis of Ghostty terminal emulator bugs (open and resolved), issues, and design decisions that inform Crux development strategy"
 phase: 0
 topics:
   - terminal emulation
@@ -1317,3 +1317,692 @@ The comprehensive testing checklist above should be integrated into Crux's QA pr
 - [Ghostty terminal colors](https://github.com/ghostty-org/ghostty/discussions/5961)
 - [Color Theme - Features](https://ghostty.org/docs/features/theme)
 - [Theme color palette changed in 1.2.1](https://github.com/ghostty-org/ghostty/discussions/9063)
+
+---
+
+## Resolved Issues — Root Cause & Fix Analysis
+
+> 아래는 Ghostty에서 **해결된** 주요 버그들의 근본 원인과 수정 방법 분석이다.
+> 버전별 수정 이력과 코드 레벨 교훈을 포함한다.
+
+# Ghostty Closed Bug Analysis
+
+Analysis of **closed/resolved** bugs in Ghostty terminal emulator (Zig + Metal). Focus on understanding HOW they were fixed and what lessons Crux (Rust + GPUI/Metal) should learn.
+
+## Executive Summary
+
+Ghostty went through multiple major rewrites and found critical bugs in:
+1. **IME handling** (preedit destruction on modifier keys)
+2. **Font rendering** (complete rewrite in 1.2.0, 3 patch releases to stabilize)
+3. **TERM name** (attempted "ghostty", blocked by Vim hardcoding, reverted to "xterm-ghostty")
+4. **Security** (arbitrary code execution via window title sequences)
+5. **Metal rendering** (Intel Mac undefined behavior, shader validation)
+6. **Keyboard protocol** (Kitty protocol regressions, control character encoding)
+
+**Key lesson**: Even with extensive private beta testing, major subsystem rewrites (font rendering) caused regressions that took months to stabilize.
+
+---
+
+## Critical Bugs Fixed
+
+### 1. IME Preedit Destruction on Modifier Keys
+
+**Issue #4634** (closed in v1.1.0)
+
+#### Bug Description
+When typing with Japanese/Korean/CJK IME, pressing ANY modifier key (Shift, Ctrl, Option, Command) would **destroy the preedit text** (composition text). This made IME input nearly unusable.
+
+#### Root Cause
+Ghostty was incorrectly handling modifier key events during IME composition. When a modifier key event arrived, it would:
+1. Clear the preedit text prematurely
+2. Send the key event to the PTY
+3. Leave the IME in an inconsistent state
+
+#### Fix (v1.1.0 - January 30, 2025)
+- Preedit text no longer disappears when a modifier key is pressed
+- Control characters like Ctrl+H now work as expected for IME
+- Massive testing with CJK (Chinese, Japanese, Korean), dead keys, emoji, Unicode hex input
+
+**Platform-specific fixes:**
+- **macOS**: Tested AquaSKK and macSKK Japanese IME, fixed IME window positioning when `window-padding` is set
+- **Linux**: Tested fcitx and ibus under X11/Wayland, found and worked around bug in ibus 1.5.29 causing deadkey input to become "stuck"
+
+#### Related Fixes
+- **Issue #5728** (v1.2.0): Fixed pressing backspace with preedit text
+- **Issue #7226** (v1.2.0): Key input that clears preedit without text shouldn't encode to PTY
+
+#### Lesson for Crux
+**CRITICAL**: Implement IME overlay rendering from day one. NEVER send modifier key events to PTY during composition. NEVER mix preedit text with committed text in the terminal grid.
+
+**Architecture pattern:**
+```rust
+// Composition text = overlay rendering only, never touches PTY
+// Committed text = write to PTY
+// Modifier keys during composition = UI feedback only, no PTY write
+```
+
+Test with:
+- Korean Hangul (2-Set, 3-Set)
+- Japanese Hiragana/Katakana
+- Chinese Pinyin
+- Dead key combinations (macOS ABC - Extended)
+
+**References:**
+- [Issue #4634](https://github.com/ghostty-org/ghostty/issues/4634)
+- [1.1.0 Release Notes](https://ghostty.org/docs/install/release-notes/1-1-0)
+- [1.2.0 Release Notes](https://ghostty.org/docs/install/release-notes/1-2-0)
+
+---
+
+### 2. Font Rendering Complete Rewrite (v1.2.0)
+
+**Major subsystem rewrite - September 15, 2025**
+
+#### Background
+Ghostty 1.2.0 contained a **substantial overhaul of the font rendering system**. The renderer backends were reworked so that core logic is shared between OpenGL and Metal.
+
+#### Consequences
+Despite extensive testing, the rewrite introduced multiple regressions requiring **3 patch releases** (1.2.1, 1.2.2, 1.2.3) to stabilize.
+
+#### Specific Issues Fixed in 1.2.1 (October 6, 2025)
+
+**Issue: Oversized CJK Characters**
+- CJK characters appeared **oversized** when using wide-aspect primary fonts
+- **Fix**: IC width (ideographic character width) now upper-bounded by measuring overall bounding box of ASCII characters
+
+**Issue: Nerd Font Icons Misaligned**
+- Icons always took 2 cells of space, causing misalignment
+- Large gaps around icons
+- **Fix**: Icons now larger and better matched in size, icons wider than single cell are **left-aligned** (not centered)
+
+**Issue: FreeType Measurement Inconsistency**
+- Glyphs measured with different hinting than rendering
+- **Fix**: Ensure glyphs measured with same hinting as rendered
+
+**Issue: Nerd Font Patch Extraction Bug**
+- Rules applied to wrong glyphs due to codepoint offset issues
+- **Fix**: Correct codepoint offset calculation
+
+#### Continued Fixes in 1.2.3 (October 23, 2025)
+
+Version 1.2.3 "addresses **all currently known font rendering issues**" from the 1.2.0 rewrite:
+- Numerous tweaks for edge cases, especially **icon glyphs**
+- Fixed issues #9076, #9142, #9160, #9152 (icon rendering edge cases)
+
+#### Lesson for Crux
+**DO NOT rewrite font rendering subsystem after launch**. Get it right in Phase 1:
+- Test CJK sizing from day one
+- Test Nerd Font icons early (powerline, devicons)
+- Use consistent measurement/rendering hinting
+- Left-align wide icons (Ghostty learned this the hard way)
+
+**Font fallback strategy:**
+```rust
+// Ghostty's rules (copy these):
+1. If bold font not found → use regular font with bold style
+2. If italic not available → synthesize by applying slant
+3. Measure fallback glyphs with SAME hinting as render
+4. Upper-bound IC width by ASCII bounding box
+5. Left-align wide icons (>1 cell)
+```
+
+**References:**
+- [1.2.0 Release Notes](https://ghostty.org/docs/install/release-notes/1-2-0)
+- [1.2.1 Release Notes](https://ghostty.org/docs/install/release-notes/1-2-1)
+- [1.2.3 Release Notes](https://ghostty.org/docs/install/release-notes/1-2-3)
+- [Discussion #8822 - Nerd Fonts glyph width](https://github.com/ghostty-org/ghostty/discussions/8822)
+- [Discussion #8651 - Chinese font size too big](https://github.com/ghostty-org/ghostty/discussions/8651)
+
+---
+
+### 3. TERM Name Controversy (xterm-ghostty)
+
+**Attempted in private beta, reverted before 1.0**
+
+#### The Problem
+For most of its life, Ghostty advertised `TERM=xterm-ghostty`. The `xterm-` prefix exists because many programs do **string matching** on `$TERM` to determine feature support.
+
+#### The Attempt
+For ~1 month in private beta, Ghostty tried to become `TERM=ghostty` (without prefix). They found:
+- Many bugs in their own terminfo database
+- Upstream issues in other programs
+- **Vim 9.0 hardcodes Kitty Keyboard Protocol support** and doesn't respect terminfo
+
+#### The Blocker
+Vim 9.0 supports Kitty Keyboard Protocol but **hardcodes the list of terminals** that support it:
+```
+keyprotocol = "kitty:kitty,foot:kitty,ghostty:kitty,wezterm:kitty,xterm:mok2"
+```
+
+Until Vim fixed this bug (patch 9.1.0969) AND downstream distros updated, Ghostty was forced to keep `xterm-ghostty`.
+
+#### Current Status
+- **Ghostty's terminfo entry** is in ncurses 6.5-20241228 and above
+- `xterm-ghostty` remains the default for compatibility
+- Shell integration can now install terminfo automatically via SSH (v1.2.0)
+
+#### Lesson for Crux
+**Use `xterm-crux` from day one**. The `xterm-` prefix is critical for compatibility. Ghostty learned this the hard way.
+
+**DO NOT attempt:**
+- Pure "crux" TERM name
+- "crux-256color" or other creative names
+- Assuming terminfo propagation will work
+
+**DO:**
+- Ship with `xterm-crux` terminfo
+- Submit to ncurses upstream early (6-12 month lag for distros)
+- Implement shell integration terminfo installer (Ghostty pattern from 1.2.0)
+- Test string-matching apps: Vim, Emacs, tmux, ssh clients
+
+**References:**
+- [Terminfo Documentation](https://ghostty.org/docs/help/terminfo)
+- [Devlog 004 - TERM name controversy](https://mitchellh.com/writing/ghostty-devlog-004)
+- [Discussion #3161 - Error opening terminal: xterm-ghostty](https://github.com/ghostty-org/ghostty/discussions/3161)
+- [Vim Issue #16318 - Kitty Keyboard Protocol not used by default](https://github.com/vim/vim/issues/16318)
+
+---
+
+### 4. Security Vulnerability (CVE-2024-56803)
+
+**Fixed in v1.0.1 - December 31, 2024**
+
+#### Vulnerability Details
+Ghostty 1.0.0 allowed attackers to execute **arbitrary commands** via window title escape sequences.
+
+**Attack vector:**
+1. Attacker sends malicious escape sequence (OSC 21 t - report window title)
+2. Title is inserted directly into command line
+3. User presses Enter → command executes
+
+**Example:**
+```bash
+# Attacker sends:
+echo -e "\e]0;rm -rf /tmp/*\e\\"
+# Terminal reports title via CSI 21 t
+# Title text appears on command line
+# User presses Enter → disaster
+```
+
+#### Classification
+- **CVE-2024-56803**
+- CWE-94: Improper Control of Generation of Code ('Code Injection')
+- CVSS 4.0 Score: 5.1 (Medium severity)
+- **Requires user interaction** (pressing Enter)
+
+#### Fix (v1.0.1)
+New configuration option `title_report` defaults to **false**:
+- Disables title reporting (CSI 21 t) by default
+- Can be enabled for compatibility (with security warning in docs)
+- Similar vulnerabilities existed in other terminals (iTerm2, etc.)
+
+#### Lesson for Crux
+**CRITICAL**: Disable dangerous escape sequences by default.
+
+**High-risk sequences:**
+- `CSI 21 t` - Report window title (code injection vector)
+- `OSC 52` - Clipboard access (data exfiltration, but useful)
+- `OSC 10/11/12` - Query colors (fingerprinting)
+- `CSI 18 t` - Report window size (fingerprinting)
+
+**Crux strategy:**
+```rust
+// Default config (secure):
+title_report = false
+clipboard_write = "ask"  // Prompt user on first use
+color_query = false
+
+// Allow opt-in for power users:
+allow_dangerous_sequences = ["title_report", "clipboard"]
+```
+
+**Test with:**
+- Malicious escape sequences from untrusted sources
+- SSH connections to compromised hosts
+- Terminal sharing scenarios
+
+**References:**
+- [CVE-2024-56803 Advisory](https://github.com/ghostty-org/ghostty/security/advisories/GHSA-5hcq-3j4q-4v6p)
+- [1.0.1 Release Notes](https://ghostty.org/docs/install/release-notes/1-0-1)
+- [Code Execution Through Ghostty Window Title](https://www.netsecurity.no/en/fagblogg/code-execution-through-ghostty-window-title)
+
+---
+
+### 5. Metal Rendering on Intel Macs
+
+**Issue #3352, fixed in v1.1.1**
+
+#### Bug Description
+Red/white reverse "E" artifacts appeared when running Ghostty **fullscreen** on some Intel Mac laptops. Custom shaders broke completely on Intel Macs in v1.2.0.
+
+#### Root Cause
+Ghostty was triggering **undefined behavior** on macOS when using **discrete GPUs**:
+- All Apple Silicon Macs have integrated GPUs (no issue)
+- Intel Macs with discrete GPUs hit Metal API validation failures
+- Custom shader compilation failed on Intel (Metal GPU driver bug)
+
+#### Fix (v1.1.1)
+Fixed undefined behavior in Metal API calls that only manifested on discrete GPUs.
+
+#### Subsequent Issue (v1.2.0)
+Custom shader feature broke again on Intel Macs. Developers considered **disabling custom shaders on Intel Macs entirely** due to Metal GPU driver bugs.
+
+#### Lesson for Crux
+**Test on Intel Macs early** (before Apple drops support):
+- Integrated GPU (Intel Iris)
+- Discrete GPU (AMD Radeon)
+- Metal API validation mode (`MTL_DEBUG_LAYER=1`)
+
+**GPUI considerations:**
+- GPUI uses Metal on macOS (same risk as Ghostty)
+- Verify shader compilation on Intel Macs
+- Test with `opt-level = 0` (debug shaders different from release)
+
+**Specific tests:**
+- Fullscreen mode (different rendering path)
+- Window resize (shader recompilation)
+- Multiple displays (GPU switching on laptops)
+
+**Fallback strategy:**
+```rust
+// Detect Intel Mac + discrete GPU
+if is_intel_mac && has_discrete_gpu {
+    // Disable advanced shaders
+    // OR: Use simplified shader path
+    warn!("Intel Mac detected, using compatibility mode");
+}
+```
+
+**References:**
+- [Discussion #3352 - Fullscreen artifacts on Intel Mac](https://github.com/ghostty-org/ghostty/discussions/3352)
+- [Discussion #8695 - custom-shader broken on Intel Mac 1.2.0](https://github.com/ghostty-org/ghostty/discussions/8695)
+- [1.1.1 Release Notes](https://ghostty.org/docs/install/release-notes/1-1-1)
+
+---
+
+### 6. Kitty Keyboard Protocol Regressions
+
+**Issues in v1.1.1, fixed in v1.1.2**
+
+#### Bug Description (v1.1.1)
+Critical regression on macOS: **control-modified keys** stopped working in programs using Kitty Keyboard Protocol (Neovim, Fish 4.0).
+
+**Example:**
+- `Ctrl+C` → no response
+- `Ctrl+D` → no response
+- `Ctrl+[` → encoded as `^[[91;5u` instead of `^[` (violates Kitty spec)
+
+#### Root Cause
+Changes to keyboard event handling in 1.1.1 broke the mapping between macOS key events and Kitty protocol encoding.
+
+#### Fix (v1.1.2)
+Hotfix release specifically to restore control-modified key functionality.
+
+#### Related Issue: Vim Hardcoding
+Vim 9.0 doesn't respect terminfo for Kitty protocol support. It **hardcodes** terminal names:
+```
+keyprotocol = "kitty:kitty,foot:kitty,ghostty:kitty,wezterm:kitty,xterm:mok2"
+```
+
+**Fixed in Vim patch 9.1.0969** to include "ghostty" in the default list.
+
+#### Lesson for Crux
+**Kitty Keyboard Protocol is critical for modern editors**:
+- Neovim depends on it for key disambiguation
+- Fish shell 4.0+ requires it
+- Vim requires manual terminfo setup OR hardcoded TERM name
+
+**Implementation checklist:**
+- [ ] Implement Kitty progressive enhancement flags
+- [ ] Test with Neovim (`:set termguicolors`, key mappings)
+- [ ] Test with Fish 4.0+ (completion, key bindings)
+- [ ] Test with Kakoune (heavy Kitty protocol user)
+- [ ] Verify control character encoding matches spec
+- [ ] Test Escape key disambiguation (`Ctrl+[` vs ESC)
+
+**Edge cases from Ghostty:**
+- `Ctrl+[` must encode as `^[` (ESC), NOT `^[[91;5u`
+- Control characters during IME composition
+- Option/Alt key combinations (locale-dependent)
+
+**References:**
+- [1.1.1 Release Notes](https://ghostty.org/docs/install/release-notes/1-1-1)
+- [1.1.2 Release Notes](https://ghostty.org/docs/install/release-notes/1-1-2)
+- [Vim Issue #16318](https://github.com/vim/vim/issues/16318)
+- [Discussion #5071 - Ctrl+[ encoding bug](https://github.com/ghostty-org/ghostty/discussions/5071)
+
+---
+
+### 7. Clipboard Fixes (macOS)
+
+**Issue #4956, fixed in v1.1.0**
+
+#### Bug Description
+Pasting **multiple files** would separate paths with **newlines** instead of spaces:
+```bash
+# Before (broken):
+/path/to/file1.txt
+/path/to/file2.txt
+
+# After (fixed):
+/path/to/file1.txt /path/to/file2.txt
+```
+
+#### Fix (v1.1.0)
+Multiple file paths now separated by **space** instead of newline.
+
+#### Ongoing Issues
+Multiple clipboard-related issues remain open:
+- **Issue #5838**: `copy-on-select = clipboard` doesn't work (macOS 15.3)
+- **Discussion #4898**: Copy-on-select goes to special pasteboard, not system clipboard
+- **Discussion #10011**: `copy_to_clipboard` fails on macOS Sequoia 15.7.1
+
+#### Lesson for Crux
+**Clipboard is surprisingly complex on macOS**:
+- Multiple pasteboards (general, selection, find, drag)
+- File URLs vs plain text
+- Rich text formats (RTF, HTML)
+- Ownership transfer timing
+
+**Phase 3 Crux implementation:**
+- Use `NSPasteboard.general` for Copy/Paste
+- Consider separate selection pasteboard (X11-style)
+- Test file path pasting (Finder drag-and-drop)
+- Test with clipboard managers (Alfred, Paste, etc.)
+
+**References:**
+- [1.1.0 Release Notes](https://ghostty.org/docs/install/release-notes/1-1-0)
+- [Issue #5838 - copy-on-select broken](https://github.com/ghostty-org/ghostty/issues/5838)
+- [Discussion #5600 - Clipboard bug in macOS](https://github.com/ghostty-org/ghostty/discussions/5600)
+
+---
+
+### 8. Deadlock in Color Operations
+
+**Fixed in v1.2.3 - October 23, 2025**
+
+#### Bug Description
+Programs that emit **many color change or query operations** could cause Ghostty to **hang completely** (deadlock).
+
+**Example scenario:**
+- Script repeatedly changes background color (OSC 11)
+- Terminal queries current color (OSC 11 ?)
+- Deadlock between renderer thread and IO thread
+
+#### Fix (v1.2.3)
+Critical deadlock fix. Version 1.2.3 is **highly recommended** for all 1.2.x users.
+
+#### Related Fixes in 1.2.3
+- Memory corruption related to scrolling
+- Resource leaks
+- macOS titlebar tabs improvements (6+ titlebar-related issues)
+
+#### Lesson for Crux
+**Color operations are async operations**:
+- Renderer thread updates colors
+- IO thread processes escape sequences
+- PTY thread reads output
+- **Potential for deadlock** if locks acquired in wrong order
+
+**GPUI considerations:**
+- GPUI has its own threading model
+- Background updates vs foreground rendering
+- Verify lock ordering with TSan (Thread Sanitizer)
+
+**Test cases:**
+```bash
+# Rapid color changes:
+while true; do
+  echo -e "\e]11;#FF0000\e\\"
+  echo -e "\e]11;#00FF00\e\\"
+done
+
+# Color queries:
+while true; do
+  echo -e "\e]11;?\e\\"
+done
+```
+
+**References:**
+- [1.2.3 Release Notes](https://ghostty.org/docs/install/release-notes/1-2-3)
+- [Issue #9191 - macOS deadlock when selecting text](https://github.com/ghostty-org/ghostty/issues/9191)
+
+---
+
+### 9. SSH Shell Integration
+
+**Feature added in v1.2.0**
+
+#### Problem
+Remote hosts don't have `xterm-ghostty` terminfo installed, causing:
+- `Error opening terminal: xterm-ghostty`
+- Fallback to `TERM=xterm` (loses features)
+- Manual terminfo installation required
+
+#### Solution (v1.2.0)
+New shell integration features:
+- **`ssh-terminfo`**: Automatically copies terminfo to remote machine
+- **`ssh-env`**: Sets `TERM=xterm-256color` for SSH sessions (fallback)
+- Caches successful installations to avoid repeated attempts
+
+#### Configuration
+```
+shell-integration-features = ssh-env,ssh-terminfo
+```
+
+#### Lesson for Crux
+**Phase 5 feature**: Implement automatic terminfo propagation:
+
+```bash
+# Shell integration script (injected into .bashrc/.zshrc):
+if [[ -n "$SSH_CONNECTION" ]] && [[ "$TERM" == "xterm-crux" ]]; then
+  # Check if terminfo exists on remote
+  if ! infocmp xterm-crux &>/dev/null; then
+    # Copy from local machine via stdin
+    cat ~/.terminfo/x/xterm-crux | base64
+    # Decode and install on remote
+  fi
+fi
+```
+
+**Cache strategy:**
+- Hash of (hostname, username, terminfo content)
+- Store in `~/.config/crux/terminfo-cache.json`
+- Skip installation if cache hit
+
+**References:**
+- [1.2.0 Release Notes](https://ghostty.org/docs/install/release-notes/1-2-0)
+- [Shell Integration Documentation](https://ghostty.org/docs/features/shell-integration)
+- [Discussion #4156 - Automatic terminfo propagation](https://github.com/ghostty-org/ghostty/discussions/4156)
+
+---
+
+### 10. Float Rounding in Rendering
+
+**From Mitchell Hashimoto's devlogs**
+
+#### Bug Description
+Audit of `@intFromFloat` usage found **rounding errors** causing slight rendering artifacts:
+- Off-by-one pixel errors
+- Misaligned glyph rendering
+- Cursor positioning drift
+
+#### Root Cause
+Size data structures used **floats** internally, converted to ints for GPU with incorrect rounding.
+
+#### Fix
+**Changed all size data structures to use integers**:
+- Only convert integers to floats for GPU
+- Eliminates float rounding errors entirely
+- Described as "hard lesson learned"
+
+#### Lesson for Crux
+**GPUI uses floats extensively** (Pixels, Points, PointF32):
+- Verify rounding behavior in GPUI coordinate conversions
+- Consider integer-based cell grid (rows/cols)
+- Convert to float only at final GPU submission
+
+**Audit checklist:**
+```rust
+// Risky patterns:
+let cell_x = (cursor_x as f32 / cell_width) as usize;  // ❌
+
+// Safer patterns:
+let cell_x = cursor_x / cell_width;  // ✅ (if both integers)
+```
+
+**References:**
+- [Ghostty Devlog 001](https://mitchellh.com/writing/ghostty-devlog-001)
+- [Ghostty 1.0 Reflection](https://mitchellh.com/writing/ghostty-1-0-reflection)
+
+---
+
+## Additional Notable Fixes
+
+### macOS Titlebar Issues (v1.2.3)
+Multiple titlebar-related bugs fixed:
+- Title misalignment and clipping in tab titlebar style
+- Titlebar coloring in fullscreen mode
+- Theme changes causing titlebar to lose styling
+- New Tab action unreliable (opened window instead of tab)
+
+**Lesson**: macOS native titlebar integration is complex. Test extensively with:
+- Multiple titlebar styles
+- Fullscreen mode transitions
+- Theme switching (light/dark)
+- Window restoration
+
+**Reference**: [1.2.3 Release Notes](https://ghostty.org/docs/install/release-notes/1-2-3)
+
+### Mouse Reporting Edge Cases
+- Negative coordinates are **normal** for SGR pixel mouse events (mode 1016)
+- Coordinates outside window boundaries can be negative
+- XTerm, Ghostty, Foot, Kitty all report negative values
+
+**Lesson**: Don't clamp mouse coordinates to window bounds for SGR pixel mode.
+
+**Reference**: [Discussion #9647 - Mouse tracking negative numbers](https://github.com/ghostty-org/ghostty/discussions/9647)
+
+---
+
+## Top 15 Lessons for Crux
+
+### Critical (Do from Day One)
+
+1. **IME Overlay Rendering** - NEVER mix preedit with PTY. Modifier keys during composition = UI only, no PTY write.
+
+2. **TERM Name = `xterm-crux`** - The `xterm-` prefix is non-negotiable. Ghostty tried to remove it, blocked by Vim hardcoding.
+
+3. **Disable Dangerous Sequences** - `title_report = false` by default. CSI 21 t is a code injection vector.
+
+4. **Font Measurement Consistency** - Measure glyphs with SAME hinting as rendering. Upper-bound IC width by ASCII bbox.
+
+5. **Integer-Based Grid** - Use integers for cell grid, convert to float only for GPU. Avoid float rounding errors.
+
+6. **Test on Intel Macs** - Metal API validation, discrete GPU undefined behavior, shader compilation failures.
+
+7. **Kitty Keyboard Protocol** - Critical for Neovim/Fish. Test control character encoding, especially `Ctrl+[` vs ESC.
+
+### Important (Phase 2-3)
+
+8. **Font Rendering Testing** - Test CJK sizing, Nerd Font icons, italic fallback EARLY. Don't rewrite this subsystem post-launch.
+
+9. **Clipboard Complexity** - macOS has multiple pasteboards. Test file path pasting, rich text, clipboard managers.
+
+10. **Lock Ordering** - Color operations can deadlock. Verify lock ordering with TSan, test rapid OSC 10/11 changes.
+
+11. **Titlebar Integration** - macOS native titlebar is complex. Test fullscreen transitions, theme switching, window restoration.
+
+12. **Mouse Reporting** - SGR pixel mode allows negative coordinates. Don't clamp to window bounds.
+
+### Nice to Have (Phase 5)
+
+13. **SSH Shell Integration** - Auto-install terminfo on remote hosts. Cache installations to avoid repeated attempts.
+
+14. **Terminfo Upstream** - Submit to ncurses early (6-12 month distro lag). Ghostty in ncurses 6.5-20241228.
+
+15. **Private Beta Testing** - Even with extensive beta, major rewrites (font rendering) caused 3 patch releases to stabilize.
+
+---
+
+## Testing Strategy
+
+Based on Ghostty's experience, prioritize:
+
+### Phase 1 (MVP)
+- [ ] Korean Hangul IME (2-Set, 3-Set, modifier keys)
+- [ ] Japanese Hiragana/Katakana (AquaSKK, macSKK)
+- [ ] CJK font sizing (Noto Sans CJK, Source Han Sans)
+- [ ] Nerd Font icons (powerline, devicons)
+- [ ] TERM=xterm-crux compatibility (Vim, Emacs, tmux)
+- [ ] Intel Mac testing (integrated + discrete GPU)
+
+### Phase 2 (Tabs/Panes)
+- [ ] Kitty Keyboard Protocol (Neovim, Fish 4.0+)
+- [ ] Titlebar integration (fullscreen, theme switching)
+- [ ] Window restoration edge cases
+
+### Phase 3 (IME/Clipboard)
+- [ ] Clipboard multi-pasteboard handling
+- [ ] File path pasting from Finder
+- [ ] Clipboard manager compatibility
+
+### Phase 5 (Advanced)
+- [ ] SSH shell integration
+- [ ] Terminfo auto-propagation
+- [ ] Security testing (malicious escape sequences)
+
+---
+
+## Version Timeline
+
+| Version | Date | Key Fixes |
+|---------|------|-----------|
+| 1.0.0 | Jan 8, 2025 | Public release |
+| 1.0.1 | Dec 31, 2024 | **Security**: CVE-2024-56803 (code injection) |
+| 1.1.0 | Jan 30, 2025 | **IME**: Preedit modifier key destruction fix |
+| 1.1.1 | - | **Metal**: Intel Mac discrete GPU undefined behavior |
+| 1.1.2 | - | **Kitty Protocol**: Control-modified keys regression fix |
+| 1.2.0 | Sep 15, 2025 | **Font Rewrite**: Shared OpenGL/Metal renderer, SSH integration |
+| 1.2.1 | Oct 6, 2025 | **Font Fixes**: CJK oversized, Nerd Font icons, FreeType hinting |
+| 1.2.3 | Oct 23, 2025 | **Critical**: Deadlock fix, titlebar improvements, font refinements |
+
+---
+
+## Sources
+
+### Official Documentation
+- [Ghostty Release Notes](https://ghostty.org/docs/install/release-notes)
+- [Terminfo Documentation](https://ghostty.org/docs/help/terminfo)
+- [Shell Integration](https://ghostty.org/docs/features/shell-integration)
+
+### GitHub Issues & Discussions
+- [Issue #4634 - Preedit text disappears on modifier keys](https://github.com/ghostty-org/ghostty/issues/4634)
+- [Issue #16318 (Vim) - Kitty protocol not used by default](https://github.com/vim/vim/issues/16318)
+- [Discussion #3161 - Error opening terminal: xterm-ghostty](https://github.com/ghostty-org/ghostty/discussions/3161)
+- [Discussion #3352 - Fullscreen artifacts on Intel Mac](https://github.com/ghostty-org/ghostty/discussions/3352)
+- [Discussion #8651 - Chinese font size too big](https://github.com/ghostty-org/ghostty/discussions/8651)
+- [Discussion #8822 - Nerd fonts glyph width](https://github.com/ghostty-org/ghostty/discussions/8822)
+
+### Security
+- [CVE-2024-56803 Advisory](https://github.com/ghostty-org/ghostty/security/advisories/GHSA-5hcq-3j4q-4v6p)
+- [Code Execution Through Ghostty Window Title](https://www.netsecurity.no/en/fagblogg/code-execution-through-ghostty-window-title)
+
+### Blog Posts
+- [Ghostty Devlog 001](https://mitchellh.com/writing/ghostty-devlog-001) - Float rounding issues
+- [Ghostty Devlog 004](https://mitchellh.com/writing/ghostty-devlog-004) - TERM name controversy
+- [Ghostty 1.0 Reflection](https://mitchellh.com/writing/ghostty-1-0-reflection) - Lessons learned
+
+---
+
+## Conclusion
+
+Ghostty's journey from private beta to 1.0 and beyond reveals critical lessons for Crux:
+
+1. **IME is make-or-break for CJK users** - Get overlay rendering right from day one
+2. **Font rendering is deceptively complex** - Test CJK, icons, and fallback early
+3. **TERM name compatibility matters** - Use `xterm-crux`, don't be clever
+4. **Security isn't optional** - Disable dangerous sequences by default
+5. **Major rewrites are risky** - Even with extensive testing, font rewrite took 3 patches to stabilize
+
+**Key advantage for Crux**: We can learn from Ghostty's mistakes and implement these fixes from the start, avoiding the same painful regressions.

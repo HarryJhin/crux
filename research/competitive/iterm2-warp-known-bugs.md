@@ -1,6 +1,6 @@
 ---
 title: Terminal Bugs & Lessons Learned (iTerm2, Warp, Others)
-description: Known bugs and issues in iTerm2 and Warp terminal emulators that Crux should learn from and avoid
+description: Known bugs and issues (both open and resolved) in iTerm2 and Warp terminal emulators that Crux should learn from and avoid, including CVE security patches and root cause analysis
 phase: all
 topics: [macos, terminal-emulation, ime, performance, architecture]
 related: [ime-clipboard.md, terminal-emulation.md, terminal-architecture.md]
@@ -707,3 +707,937 @@ Based on this research, suggest adding to `PLAN.md`:
 ### Other Terminals
 - [Alacritty Issue #6942](https://github.com/alacritty/alacritty/issues/6942)
 - [Kitty Issue #462](https://github.com/kovidgoyal/kitty/issues/462)
+
+---
+
+## Resolved Issues — Root Cause & Fix Analysis
+
+> 아래는 iTerm2와 Warp에서 **해결된** 주요 버그들의 근본 원인과 수정 방법 분석이다.
+> CVE 보안 패치와 코드 레벨 교훈을 포함한다.
+
+**Research Date**: 2026-02-12
+**Sources**: iTerm2 GitLab, Warp GitHub, CVE databases, Mozilla Security Blog
+
+---
+
+## Table of Contents (Resolved Issues)
+
+1. [Critical Security Vulnerabilities](#critical-security-vulnerabilities-1)
+2. [Rendering & GPU Issues](#rendering--gpu-issues-1)
+3. [IME & International Input](#ime--international-input-1)
+4. [Memory Management](#memory-management-1)
+5. [Performance & Threading](#performance--threading-1)
+6. [Font Rendering](#font-rendering-1)
+7. [Protocol & Integration](#protocol--integration-1)
+8. [Lessons for Crux](#lessons-for-crux-1)
+
+---
+
+## Critical Security Vulnerabilities
+
+### 1. CVE-2019-9535: iTerm2 tmux RCE (7 years latent)
+
+**Severity**: CRITICAL (CVSS unspecified, RCE)
+**Affected**: iTerm2 ≤3.3.5 (2012-2019)
+**Fixed**: iTerm2 3.3.6
+
+#### Bug Description
+Attackers could execute arbitrary commands by providing malicious output to the terminal when tmux integration (`tmux -CC`) was enabled (default).
+
+#### Root Cause
+Improper neutralization of special elements in output used by downstream components (CWE-94: Code Injection). iTerm2's tmux control mode integration did not sanitize escape sequences before interpreting them as shell commands.
+
+#### Attack Vector
+1. User connects to malicious SSH server OR
+2. User runs `curl http://attacker.com` OR
+3. User runs `tail -f /var/log/apache2/referer_log` on compromised log
+
+Malicious escape sequences in output → tmux integration parses → shell command execution.
+
+#### Fix
+- Mozilla-sponsored security audit identified the flaw
+- Patch sanitizes escape sequences in tmux control mode
+- Commands from tmux output now validated before execution
+
+#### Lesson for Crux
+- **CRITICAL**: Sanitize ALL escape sequences before processing, especially in:
+  - IPC protocol handlers (`crux-ipc`)
+  - tmux integration (Phase 5)
+  - Shell integration (Phase 2)
+- Never trust terminal output as safe input for command execution
+- Security audit before 1.0 release
+- Add fuzzing for escape sequence parser
+
+**References**:
+- [Mozilla Security Blog](https://blog.mozilla.org/security/2019/10/09/iterm2-critical-issue-moss-audit/)
+- [NVD CVE-2019-9535](https://nvd.nist.gov/vuln/detail/CVE-2019-9535)
+- [BleepingComputer Coverage](https://www.bleepingcomputer.com/news/security/iterm2-patches-critical-vulnerability-active-for-7-years/)
+
+---
+
+### 2. CVE-2024-38396: iTerm2 Window Title Injection RCE
+
+**Severity**: CRITICAL (CVSS 9.8)
+**Affected**: iTerm2 3.5.0–3.5.1 only (regression)
+**Fixed**: iTerm2 3.5.2
+
+#### Bug Description
+Crafted escape sequence could inject arbitrary code via window title reporting, combined with tmux integration for automatic execution (no Enter required).
+
+#### Root Cause
+**Regression bug**: Window title reporting was disabled in <3.5.0 for security reasons, but 3.5.0 re-enabled it without proper sanitization.
+
+Two-step exploit:
+1. **Title Setting**: `\033]0;malicious_content\a` sets window title
+2. **Title Retrieval**: `CSI Ps 21 t` retrieves title → injects into stdin → executes on Enter
+
+With tmux integration: automatic newlines → no user interaction needed.
+
+#### Technical Details (from researcher Vin01)
+```
+# Step 1: Set malicious title
+echo -e '\033]0;$(whoami > /tmp/pwned)\a'
+
+# Step 2: Trigger title report (normally requires Enter)
+echo -e '\033[21t'
+
+# With tmux integration: automatic execution
+```
+
+The tmux integration "sneaked in the reported title and also provided a way to send newlines after the title was reported," automating code execution.
+
+#### Fix
+Two patches:
+- **f1e89f78**: Disabled title reporting by default
+- **fc60236a**: Patched tmux integration to prevent automatic newline injection
+
+#### Lesson for Crux
+- **CRITICAL**: Never enable window title reporting (OSC 21 t) by default
+- If implementing title reporting:
+  - Require explicit user opt-in
+  - Sanitize retrieved titles before injection into command stream
+  - Never auto-execute (no automatic newlines)
+- Regressions are dangerous: security features must survive refactors
+- Document security-sensitive escape sequences in `research/core/terminal-emulation.md`
+
+**References**:
+- [Vin01 Technical Blog (detailed exploit)](https://vin01.github.io/piptagole/escape-sequences/iterm2/rce/2024/06/16/iterm2-rce-window-title-tmux-integration.html)
+- [NVD CVE-2024-38396](https://nvd.nist.gov/vuln/detail/CVE-2024-38396)
+- [Threat Intelligence Lab Analysis](https://threatintelligencelab.com/blog/cve-2024-38396-a-critical-vulnerability-in-iterm2/)
+
+---
+
+## Rendering & GPU Issues
+
+### 3. iTerm2: Metal Renderer + Transparency = Ghosted Characters
+
+**Severity**: Medium (visual corruption)
+**Affected**: iTerm2 3.2+ with Metal + transparency enabled
+**Status**: Partially fixed, performance trade-offs remain
+
+#### Bug Description
+When Metal GPU rendering + window transparency both enabled: ghosted text appears in background, doesn't scroll/move. Darker semi-transparent rectangles incorrectly overlay inactive panes.
+
+#### Root Cause
+Metal renderer uses a more complex blending algorithm when transparency is enabled. The GPU renderer has to composite:
+1. Background transparency/blur
+2. Text rendering
+3. Inactive pane dimming
+
+The blending pipeline doesn't correctly clear previous frame's text from the background layer before compositing the next frame.
+
+#### Fix
+- Improved blending algorithm in Metal renderer
+- Performance trade-off: transparency + blur = slower (especially Retina)
+- Recommendation: disable transparency for best performance
+
+#### Performance Notes
+From iTerm2 docs:
+- Metal renderer: 60 FPS by default, can reduce to 30 FPS ("Maximize throughput")
+- Transparency + blur on Retina: significant performance penalty
+- GPU renderer disabled when unplugged from power (battery saving)
+
+#### Lesson for Crux
+- **GPUI canvas rendering** in `crux-terminal-view`:
+  - Test transparency + Metal compositing early
+  - Implement proper frame buffer clearing between draws
+  - Use damage tracking to minimize redraws (we already have this from `alacritty_terminal`)
+- Performance considerations:
+  - Offer "high performance" vs "battery saver" modes
+  - Auto-disable GPU effects when on battery (optional)
+  - Document performance implications of transparency
+
+**References**:
+- [iTerm2 GitLab #7095](https://gitlab.com/gnachman/iterm2/-/issues/7095)
+- [iTerm2 Metal Renderer Wiki](https://gitlab.com/gnachman/iterm2/-/wikis/Metal-Renderer)
+- [Hacker News Discussion](https://news.ycombinator.com/item?id=17634547)
+
+---
+
+### 4. iTerm2: Metal Renderer Forces Discrete GPU (Battery Drain)
+
+**Severity**: Medium (battery life)
+**Affected**: Dual-GPU MacBooks with iTerm2 3.2+
+**Fixed**: iTerm2 added "Allow Metal in low power mode" option
+
+#### Bug Description
+On MacBooks with discrete + integrated GPUs, Metal renderer forces system to use high-power discrete GPU even when idle, draining battery significantly.
+
+#### Root Cause
+Metal API defaults to requesting "high-performance" GPU. iTerm2 didn't specify `MTLCreateSystemDefaultDevice()` preference for integrated GPU.
+
+#### Fix
+- Added preference: "Allow Metal rendering when disconnected from power"
+- Added "Low power mode" that prefers integrated GPU
+- Automatically fall back to CPU rendering when on battery (optional)
+
+#### Lesson for Crux
+- **GPUI framework** likely handles this, but verify:
+  - Check GPUI's Metal device selection strategy
+  - Test battery drain on dual-GPU MacBooks (M1/M2/M3 Pro/Max)
+  - Implement preference for integrated vs discrete GPU
+- macOS provides `NSProcessInfo.processInfo.isLowPowerModeEnabled`
+  - Consider auto-switching rendering strategy
+
+**References**:
+- [iTerm2 GitLab #6587](https://gitlab.com/gnachman/iterm2/-/issues/6587)
+- [iTerm2 GitLab #10671](https://gitlab.com/gnachman/iterm2/-/issues/10671)
+
+---
+
+### 5. Warp: GPU Battery Drain (Excessive Power Consumption)
+
+**Severity**: High (battery life, user experience)
+**Affected**: Warp on macOS (all versions, ongoing)
+**Status**: Partial mitigations in 2024, still problematic
+
+#### Bug Description
+- Warp forces discrete GPU on dual-GPU MacBooks even when idle
+- After disconnecting 4K/5K external display, Warp's `stable` process prevents macOS from switching back to integrated GPU
+- Idle Warp consumes excessive power, draining battery rapidly
+
+#### Root Cause
+Aggressive GPU rendering pipeline keeps discrete GPU active. Possible causes:
+- Continuous background rendering (animations, cursor blink, etc.)
+- GPU context not released when idle
+- Display mode change not triggering GPU re-evaluation
+
+#### Fix (Partial)
+No complete fix in search results. Users report workarounds:
+- Quit and relaunch Warp after display disconnect
+- Force integrated GPU via third-party tools
+
+#### Lesson for Crux
+- **GPUI idle behavior**: Ensure GPU context is released when idle
+- Implement proper GPU switching on display configuration changes
+- Monitor GPU usage in Activity Monitor during development
+- Test specifically:
+  - Idle terminal (no output)
+  - After external display disconnect
+  - Cursor blink animation (should NOT keep discrete GPU active)
+
+**References**:
+- [Warp GitHub #76](https://github.com/warpdotdev/Warp/issues/76)
+- [Warp GitHub #2223](https://github.com/warpdotdev/Warp/issues/2223)
+- [Warp GitHub #4841](https://github.com/warpdotdev/Warp/issues/4841)
+
+---
+
+### 6. Warp: Crashes on Launch (Graphics Drivers)
+
+**Severity**: Critical (unusable)
+**Affected**: Nvidia 572.xx, AMD 23.10.x+ drivers
+**Fixed**: Workaround with backend switching
+
+#### Bug Description
+Warp crashes immediately on launch when using specific Nvidia/AMD driver versions. Users reported "numerous crashes per session" under heavy load with multiple tabs.
+
+#### Root Cause
+Graphics driver incompatibility with Warp's GPU rendering pipeline (likely Vulkan or DirectX 12 issues on Windows, Metal issues on macOS).
+
+#### Fix
+- Added ability to force graphics backend selection: Vulkan, OpenGL, or DX12
+- Improved crash handling for broken link rendering in Agent Mode
+- Fixed crash with Unicode characters in file paths (text layout didn't expect BOM marker)
+
+#### Lesson for Crux
+- **GPUI is macOS-only (Metal)**, so driver compatibility is simpler
+- Still test on:
+  - Various macOS versions (13+)
+  - Intel vs Apple Silicon
+  - Different GPU generations (Intel Iris, M1/M2/M3)
+- Implement graceful fallback if Metal initialization fails
+- Add diagnostic logging for GPU initialization failures
+
+**References**:
+- [Warp GitHub #6099](https://github.com/warpdotdev/Warp/issues/6099)
+- [Warp GitHub #7898](https://github.com/warpdotdev/Warp/issues/7898)
+- [Warp Docs: Known Issues](https://docs.warp.dev/support-and-billing/known-issues)
+
+---
+
+## IME & International Input
+
+### 7. iTerm2: Emoji Variant Selector (0xFE0F) Console Confusion
+
+**Severity**: Medium (rendering corruption)
+**Affected**: iTerm2 (multiple versions)
+**Fixed**: Improved emoji variant handling
+
+#### Bug Description
+Emojis composed with Unicode variant selector 0xFE0F (emoji presentation) caused console confusion. Examples:
+- ⚠️ (U+26A0 + U+FE0F) displayed as single-width when it should be double-width
+- Emoji characters had transparent background and overlapped adjacent cells
+
+#### Root Cause
+Two conflicting standards:
+1. **Unicode Consortium**: Emoji are NOT listed as double-width
+2. **Apple rendering**: Emoji are rendered as East Asian Wide (double-width)
+
+iTerm2 defaulted to Unicode 8.0 widths (single-width), but macOS CoreText renders them double-width → visual mismatch → cell overlap.
+
+#### Fix
+- Starting Unicode 9.0: emoji should be treated as East Asian Wide
+- iTerm2 added escape sequence to switch Unicode version for width calculations
+- Later versions default to Unicode 9.0+ behavior
+
+#### Lesson for Crux
+- **East Asian Width** is critical for CJK/emoji (Phase 3 priority!)
+- Must query actual rendered glyph width from CoreText, not just Unicode data
+- Test cases:
+  - `⚠️` (warning sign + variant selector) = 2 cells
+  - `⚠` (warning sign without selector) = 1 cell
+  - Mixed emoji in CJK text
+- See `research/platform/ime-clipboard.md` for related IME issues
+- Use `unicode-width` crate with emoji support OR query CoreText
+
+**References**:
+- [iTerm2 GitLab #5003](https://gitlab.com/gnachman/iterm2/-/issues/5003)
+- [iTerm2 GitLab #7938](https://gitlab.com/gnachman/iterm2/-/issues/7938)
+- [iTerm2 GitLab #7239](https://gitlab.com/gnachman/iterm2/-/issues/7239)
+- [Hacker News: Terminal Emoji Support](https://news.ycombinator.com/item?id=30113521)
+
+---
+
+### 8. Warp: CJK Keybindings Don't Trigger on Non-US Input Sources
+
+**Severity**: High (broken for international users)
+**Affected**: Warp (all versions, still open as of 2024)
+**Status**: **NOT FIXED** (ongoing issue since Nov 2021)
+
+#### Bug Description
+Keyboard shortcuts (Cmd+P, Ctrl+R, etc.) don't work when non-US input source is active (Korean, Japanese, Chinese, French, Ukrainian, etc.). Users must switch to US keyboard layout to use Warp keybindings.
+
+#### Root Cause
+Warp's keybinding system relies on physical key codes OR character codes without proper input source mapping. When IME is active, the character codes change but Warp's keybinding matcher doesn't account for this.
+
+#### Fix
+**NONE** - Still an open issue (#341, #6891).
+
+#### Lesson for Crux
+- **CRITICAL for Phase 3**: This is a MAJOR competitive advantage opportunity
+- Use macOS `NSEvent.charactersIgnoringModifiers` for keybindings
+- From `research/platform/ime-clipboard.md`:
+  - Physical key codes (kVK_*) are layout-independent
+  - Character codes change with input source
+  - Must map both correctly
+- Test with:
+  - Korean 2-Set, Japanese Hiragana, Chinese Pinyin
+  - Verify Cmd+shortcuts work regardless of active input source
+- This is a showstopper for Korean users (Crux's target market!)
+
+**References**:
+- [Warp GitHub #341](https://github.com/warpdotdev/Warp/issues/341)
+- [Warp GitHub #6891](https://github.com/warpdotdev/warp/issues/6891)
+- [Warp Docs: Known Issues](https://docs.warp.dev/support-and-billing/known-issues)
+
+---
+
+## Memory Management
+
+### 9. iTerm2: Memory Leaks in PTYTask and tmux Integration
+
+**Severity**: Medium (memory leak, eventual slowdown)
+**Affected**: iTerm2 (multiple versions across history)
+**Fixed**: Incremental fixes in various releases
+
+#### Bug Description
+- Memory leak in PTYTask (pseudo-terminal task management)
+- Leak in tmux integration
+- Memory leak tied to keypresses
+- Unlimited scrollback could consume all available memory
+
+#### Root Cause
+Multiple issues over time:
+1. **PTYTask threading**: Main thread held references to PTY data without releasing
+2. **tmux integration**: Session objects not deallocated after detach
+3. **Scrollback buffer**: No upper limit → unbounded growth
+
+#### Fix
+- Used separate thread in PTYSession to process data from PTYTask
+- Fixed tmux session cleanup on detach
+- Added scrollback limit option (default: limited, optional unlimited)
+- Fixed keypress-related retain cycles
+
+#### Lesson for Crux
+- **Rust's ownership helps**, but still watch for:
+  - `Rc<RefCell<>>` cycles in `crux-terminal` state
+  - GPUI `Model<>` references in `crux-terminal-view`
+  - PTY thread holding references to terminal grid
+- Scrollback limit:
+  - Default: 10,000 lines (reasonable)
+  - Optional unlimited with warning
+  - Implement efficient scrollback pruning (ring buffer)
+- Test long-running sessions (days/weeks) with:
+  - High-frequency output (build logs, tail -f)
+  - Large scrollback buffers
+  - Multiple tabs/panes open
+
+**References**:
+- [iTerm2 Changelog](https://github.com/jamesarosen/iTerm2/blob/master/Changelog)
+- [iTerm2 GitLab #9221](https://gitlab.com/gnachman/iterm2/-/issues/9221)
+
+---
+
+### 10. Warp: Critical Memory Leak (3.6GB+ RAM, System Freeze)
+
+**Severity**: CRITICAL (system-level impact)
+**Affected**: Warp (2024-2025, ongoing reports)
+**Fixed**: Partial fix for Warpified subshells, still problematic
+
+#### Bug Description
+- Warp process consuming 3.6GB+ RAM (90% of 4GB system)
+- Opening Warp with no activity: ~2.5GB RAM
+- After simple `git log`: 4GB+ RAM
+- Unbounded memory growth over time → system swap thrashing → freeze
+
+#### Root Cause
+From Warp changelog: "Bug that could cause unbounded memory growth when using Warpified subshells or legacy (non-tmux) SSH Warpify implementation."
+
+Likely causes:
+- Block history retained indefinitely (Warp's unique block-based UI)
+- Agent output not garbage collected
+- Subshell environment state accumulation
+
+#### Fix (Partial)
+- Fixed unbounded memory growth in Warpified subshells
+- Improved out-of-memory handling for ambient agents
+- Users report restarting Warp resolves temporarily
+
+#### Lesson for Crux
+- **Avoid block-based UI complexity** (we're using traditional scrollback)
+- Implement strict memory limits:
+  - Scrollback buffer max size (default 10K lines)
+  - Tab/pane closure fully deallocates resources
+  - No indefinite history retention
+- Monitor memory in development:
+  - Instruments Memory Graph Debugger
+  - Heap snapshots before/after operations
+  - Long-running stress tests (days)
+
+**References**:
+- [Warp GitHub #7520](https://github.com/warpdotdev/warp/issues/7520)
+- [Warp GitHub #7101](https://github.com/warpdotdev/warp/issues/7101)
+- [Warp GitHub #8205](https://github.com/warpdotdev/warp/issues/8205)
+- [Warp Changelog](https://docs.warp.dev/getting-started/changelog)
+
+---
+
+## Performance & Threading
+
+### 11. iTerm2: PTYTask Thread Deadlock (VT100Terminal ↔ PTYTextView)
+
+**Severity**: High (terminal hangs)
+**Affected**: iTerm2 (early versions)
+**Fixed**: Architectural change to separate thread
+
+#### Bug Description
+Deadlock between `VT100Terminal` (parser) and `PTYTextView` (renderer) caused terminal to freeze, especially during high-frequency output.
+
+#### Root Cause
+**Classic deadlock**: Two threads acquiring locks in opposite order:
+- Thread A: PTY read → lock VT100Terminal → update PTYTextView (needs lock)
+- Thread B: Render → lock PTYTextView → read VT100Terminal state (needs lock)
+
+#### Fix
+Architectural change:
+1. Separate thread in `PTYSession` to process data from `PTYTask`
+2. PTYTask appends data to `VT100Terminal` stream (lock-free queue)
+3. Rendering reads from terminal state without blocking PTY thread
+
+Additional fix: Coprocess file descriptors set to **non-blocking** to avoid deadlock (issue #2576).
+
+#### Lesson for Crux
+- **Our architecture** (from `research/core/terminal-architecture.md`):
+  ```
+  PTY thread → channels → VT parser (alacritty_terminal) → GPUI update
+  ```
+  - PTY read happens in background thread (via `portable-pty`)
+  - `alacritty_terminal::Term` is single-threaded (good!)
+  - GPUI updates only on main thread
+- Use **async channels** (tokio mpsc) to avoid blocking
+- Set PTY to **non-blocking I/O**
+- Never hold locks across thread boundaries
+- Test deadlock scenarios:
+  - High-frequency output (cat large file)
+  - Rapid window resize during output
+  - Multiple tabs outputting simultaneously
+
+**References**:
+- [iTerm2 Changelog](https://github.com/jamesarosen/iTerm2/blob/master/Changelog)
+
+---
+
+### 12. iTerm2: Performance Regression in 3.5.0 (Fixed in 3.5.4beta1)
+
+**Severity**: High (severe slowdown)
+**Affected**: iTerm2 3.5.0–3.5.3
+**Fixed**: iTerm2 3.5.4beta1
+
+#### Bug Description
+Version 3.5.0 had "a bunch of performance issues" causing severe slowdown compared to 3.4.x.
+
+#### Root Cause
+Not detailed in search results, but likely related to:
+- Metal renderer changes
+- New features in 3.5.0 (faster tab creation, tmux flow control)
+- Unoptimized code paths
+
+#### Fix
+Multiple performance fixes in 3.5.4beta1. Some known improvements:
+- Faster tab creation (daemon process redesign)
+- Improved background image performance
+- Tmux integration flow control (prevents excessive buffering)
+
+#### Lesson for Crux
+- **Performance regression testing** is critical
+- Benchmark key operations across versions:
+  - Terminal output throughput (MB/s)
+  - Window resize latency
+  - Tab creation time
+  - Memory usage over time
+- Use `cargo bench` for regression tracking
+- Test on real workloads:
+  - `cat large_file.txt`
+  - `find / -name "*"`
+  - `yes | head -n 100000`
+
+**References**:
+- [iTerm2 News](https://iterm2.com/news.html)
+- [iTerm2 Changelog](https://iterm2.com/appcasts/full_changes.txt)
+
+---
+
+### 13. iTerm2: Ligatures + Underlined Text = Extreme Slowdown
+
+**Severity**: High (severe slowdown)
+**Affected**: iTerm2 with ligature fonts (FiraCode, Cascadia Code)
+**Status**: Known limitation, performance trade-off
+
+#### Bug Description
+When ligatures are enabled (Prefs > Profiles > Text) with fonts like FiraCode, rendering becomes extremely slow. Combining ligatures + underlined text causes extreme performance degradation.
+
+#### Root Cause
+Two compounding performance issues:
+1. **Ligatures disable GPU renderer**: Must fall back to CPU rendering (CoreText)
+2. **CoreText is significantly slower** than Core Graphics/Metal
+3. **Underlined text + ligatures**: Complex text layout calculations per cell
+
+From iTerm2 docs: "Makes drawing much slower for two reasons: first, it disables the GPU renderer. Second, it uses a slower API."
+
+#### Fix
+**None** - fundamental trade-off. Recommendation: disable ligatures on slow hardware.
+
+#### Lesson for Crux
+- **Decide early**: Support ligatures or not?
+- If supporting ligatures:
+  - Implement in Metal/GPU (complex, but fast)
+  - Cache ligature glyph renders
+  - Warn users about performance impact
+- **GPUI canvas approach** might make this easier than iTerm2's CoreText path
+- Test performance with:
+  - FiraCode font
+  - Code with many ligatures (`=>`, `!=`, `>=`, etc.)
+  - Underlined text (error messages, links)
+
+**References**:
+- [iTerm2 Fonts Documentation](https://iterm2.com/documentation-fonts.html)
+- [iTerm2 GitLab #8105](https://gitlab.com/gnachman/iterm2/-/issues/8105)
+
+---
+
+## Font Rendering
+
+### 14. iTerm2: GPU Rendering Changes Font Weight
+
+**Severity**: Medium (visual quality)
+**Affected**: iTerm2 with Metal renderer
+**Fixed**: Improved, but some trade-offs remain
+
+#### Bug Description
+- GPU rendering makes fonts appear thinner/lighter weight
+- Font display weight changes between GPU and CPU rendering
+- Glyphs cut off/truncated when using Metal rendering on non-Retina (1x) displays
+
+#### Root Cause
+Different rendering pipelines:
+- **CPU rendering**: CoreText with subpixel anti-aliasing (heavier weight)
+- **Metal rendering**: GPU shader anti-aliasing (lighter weight, no subpixel)
+
+From research: "GPU renderer has to use a more complex blending algorithm and GPU rendering becomes unavailable in concert with transparent windows."
+
+#### Fix
+- Improved Metal shader anti-aliasing
+- Added "Thin strokes" option (Prefs > Profiles > Text)
+- Subpixel anti-aliasing in Metal renderer (complex, see Google Doc)
+- Still trade-offs: transparency disables GPU rendering
+
+#### Lesson for Crux
+- **GPUI rendering** will face similar challenges
+- Options:
+  1. Implement subpixel anti-aliasing in Metal shaders (hard)
+  2. Use grayscale anti-aliasing + font weight adjustment
+  3. Let GPUI handle it (if they already solved this)
+- Test on:
+  - Retina vs non-Retina displays
+  - Various font weights (Light, Regular, Medium, Bold)
+  - Dark vs light backgrounds
+- Consider "Font smoothing" preference like Terminal.app
+
+**References**:
+- [iTerm2 GitLab #7128](https://gitlab.com/gnachman/iterm2/-/issues/7128)
+- [iTerm2 GitLab #11267](https://gitlab.com/gnachman/iterm2/-/issues/11267)
+- [iTerm2 Subpixel Anti-aliasing Doc](https://docs.google.com/document/d/1vfBq6vg409Zky-IQ7ne-Yy7olPtVCl0dq3PG20E8KDs/edit)
+
+---
+
+## Protocol & Integration
+
+### 15. iTerm2: Scrollback Buffer Corruption in Alternate Screen
+
+**Severity**: Medium (data loss)
+**Affected**: iTerm2 with tmux integration
+**Fixed**: iTerm2 3.0.7+
+
+#### Bug Description
+Cursor position not correctly restored in main screen when attaching to tmux integration session while in alternate screen (e.g., vim, less). Terminal state corrupted on exit from alternate screen programs.
+
+#### Root Cause
+State machine error:
+1. User runs `vim` (enters alternate screen)
+2. User detaches tmux session
+3. User reattaches tmux session
+4. Vim exits → iTerm2 restores main screen
+5. **Bug**: Cursor position from alternate screen incorrectly applied to main screen
+
+#### Fix
+- Fixed in iTerm2 3.0.7: Properly save/restore cursor state per screen buffer
+- Correctly handle tmux reattach while alternate screen active
+
+#### Lesson for Crux
+- **Alternate screen** is in scope (Phase 4 via `alacritty_terminal`)
+- `alacritty_terminal::Term` handles this, but test:
+  - Save/restore cursor position per buffer
+  - Save/restore SGR state (colors, bold, underline)
+  - Scrollback buffer not leaked between buffers
+- Test cases:
+  - `vim` → detach tmux → reattach → `:q`
+  - `less` → Ctrl+Z (background) → fg
+  - Alternate screen + window resize
+
+**References**:
+- [iTerm2 GitLab #4862](https://gitlab.com/gnachman/iterm2/-/issues/4862)
+- [iTerm2 GitLab #6273](https://gitlab.com/gnachman/iterm2/-/issues/6273)
+- [iTerm2 Changelog (3.0.7)](https://iterm2.com/appcasts/testing_changes_10_8.txt)
+
+---
+
+### 16. Warp: SSH Integration Bugs (Stuck State, Spurious Characters)
+
+**Severity**: High (broken remote sessions)
+**Affected**: Warp SSH Wrapper (2024)
+**Fixed**: Partial fixes in 2024
+
+#### Bug Description
+- Terminal stuck in bad state if SSH connection lost while alternate screen active (tmux, TUI, pagers)
+- `00~` and `01~` characters erroneously added to commands after SSH connection lost
+- SSH hangs when `/tmp` not writable for Zsh
+- SSH returns `0~` and `1~` after executing commands for Zsh 5.0.8 or older
+
+#### Root Cause
+Bracketed paste mode not disabled on SSH disconnect. When Warp's SSH wrapper crashes/disconnects:
+1. Warp enables bracketed paste mode (`\e[?2004h`)
+2. SSH connection lost
+3. Warp doesn't send disable sequence (`\e[?2004l`)
+4. Terminal left in corrupted state
+5. Next paste shows `\e[200~...\e[201~` literally
+
+#### Fix
+- Fixed: Terminal no longer stuck after SSH disconnect during alternate screen
+- Fixed: Spurious `00~` and `01~` characters removed
+- Fixed: SSH no longer hangs when `/tmp` not writable
+- Fixed: Old Zsh version compatibility
+
+#### Lesson for Crux
+- **Bracketed paste mode** (Phase 2):
+  - MUST disable on disconnect/error
+  - MUST disable before process exit
+  - Add cleanup handler in `crux-terminal`
+- Test SSH scenarios (Phase 2/5):
+  - Disconnect while in vim
+  - Kill SSH process mid-session
+  - Network interruption during paste
+- Add terminal state reset on error:
+  ```rust
+  // On disconnect/error:
+  term.reset_bracketed_paste();
+  term.reset_alternate_screen();
+  term.reset_sgr();
+  ```
+
+**References**:
+- [Warp SSH Legacy Docs](https://docs.warp.dev/terminal/warpify/ssh-legacy)
+- [Warp 2024 Year in Review](https://www.warp.dev/blog/2024-in-review)
+- [Claude Code GitHub #3134](https://github.com/anthropics/claude-code/issues/3134)
+
+---
+
+### 17. Warp: tmux Integration Not Supported (Open Since 2021)
+
+**Severity**: High (missing critical feature)
+**Affected**: Warp (all versions)
+**Status**: **NOT IMPLEMENTED** (open issue #42 since Nov 2021)
+
+#### Bug Description
+Blocks and input don't work within tmux sessions. Warp commands (Ctrl+R, etc.) don't work inside tmux. Option keys print hex codes instead of working as expected.
+
+#### Root Cause
+Warp's block-based UI architecture fundamentally conflicts with tmux's screen multiplexing. Warp would need to implement tmux control mode integration like iTerm2.
+
+#### Proposed Solution
+From GitHub discussion: "Most likely way Warp would support tmux is through tmux's control mode feature, like iTerm."
+
+#### Current Status
+- Not implemented
+- Workaround: Use SSH wrapper (tmux-powered) for remote sessions
+- Manual tmux inside Warp = degraded experience
+
+#### Lesson for Crux
+- **tmux integration** is Phase 5 priority
+- Implement via tmux control mode (`tmux -CC`) like iTerm2
+- BUT: Learn from iTerm2's security bugs (CVE-2019-9535, CVE-2024-38396)
+- tmux control mode must:
+  - Sanitize all escape sequences
+  - Never execute commands from tmux output
+  - Properly handle pane splits, window management
+- This is a MAJOR competitive advantage over Warp if done right
+
+**References**:
+- [Warp GitHub #42](https://github.com/warpdotdev/warp/issues/42)
+- [Warp GitHub #501](https://github.com/warpdotdev/Warp/discussions/501)
+- [Warp GitHub #3737](https://github.com/warpdotdev/Warp/issues/3737)
+
+---
+
+### 18. Warp: URL Click Handling Bugs
+
+**Severity**: Medium (UX annoyance)
+**Affected**: Warp (multiple versions)
+**Fixed**: Partial improvements
+
+#### Bug Description
+- Clickable hyperlinks (OSC 8) don't work with Cmd+Click
+- Long URLs cut off, Cmd+Click doesn't work past certain length
+- URLs only partially detected on hover
+- Links clickable through Warp menu (z-order bug)
+
+#### Root Cause
+Multiple issues:
+1. **OSC 8 hyperlink support**: Not implemented (iTerm2 supports this)
+2. **URL detection regex**: Doesn't handle all URL formats/lengths
+3. **Z-order bug**: Clickable regions not properly masked by modal windows
+
+#### Fix (Partial)
+- Fixed: Hovering over URLs in blocklist now correctly detects full URL
+- Fixed: URL detection improved (but still issues with very long URLs)
+- Not fixed: OSC 8 hyperlink support
+
+#### Lesson for Crux
+- **URL detection** (Phase 4):
+  - Use robust regex (or better: proper parser)
+  - Support OSC 8 hyperlinks (terminal standard)
+  - Test edge cases:
+    - Very long URLs (2048+ chars)
+    - URLs with special characters (`%`, `#`, `&`)
+    - Multiple URLs per line
+- **Click handling**:
+  - Cmd+Click should NOT conflict with text selection
+  - Right-click context menu for copy URL
+  - Proper z-order for modal windows
+
+**References**:
+- [Warp GitHub #6393](https://github.com/warpdotdev/Warp/issues/6393)
+- [Warp GitHub #5603](https://github.com/warpdotdev/Warp/issues/5603)
+- [Warp Docs: Files & Links](https://docs.warp.dev/terminal/more-features/files-and-links)
+
+---
+
+## Lessons for Crux
+
+### Security (CRITICAL)
+
+1. **Escape Sequence Sanitization**
+   - Sanitize ALL escape sequences before processing
+   - Never trust terminal output as safe input
+   - Disable dangerous sequences by default (window title reporting)
+   - Security audit before 1.0 release
+   - Add fuzzing for VT parser
+
+2. **tmux Integration Security**
+   - Learn from iTerm2's CVEs (2019-9535, 2024-38396)
+   - Sanitize control mode output before execution
+   - Never auto-execute commands from tmux
+   - Implement security-first, features second
+
+3. **Bracketed Paste Mode**
+   - MUST disable on disconnect/error
+   - MUST disable before process exit
+   - Test cleanup in error paths
+
+### Rendering & GPU
+
+4. **Metal Renderer Considerations**
+   - Test transparency + Metal compositing early
+   - Implement frame buffer clearing between draws
+   - Monitor battery drain on dual-GPU MacBooks
+   - Graceful fallback if Metal fails
+   - Test on Intel vs Apple Silicon
+
+5. **Font Rendering**
+   - Decide on ligature support early (performance trade-off)
+   - Test font weight consistency between rendering paths
+   - Implement proper subpixel anti-aliasing OR adjust font weight
+   - Test on Retina vs non-Retina displays
+
+### IME & International (Phase 3 PRIORITY)
+
+6. **CJK Keybindings**
+   - Use `NSEvent.charactersIgnoringModifiers` for shortcuts
+   - Test with Korean, Japanese, Chinese input sources
+   - Verify Cmd+shortcuts work regardless of active IME
+   - **MAJOR competitive advantage over Warp**
+
+7. **Emoji & East Asian Width**
+   - Query actual rendered glyph width from CoreText
+   - Test emoji with variant selectors (0xFE0F)
+   - Use Unicode 9.0+ width calculations
+   - Test mixed emoji + CJK text
+
+### Memory Management
+
+8. **Memory Leaks**
+   - Watch for `Rc<RefCell<>>` cycles
+   - Monitor GPUI `Model<>` references
+   - Implement scrollback limit (default 10K lines)
+   - Test long-running sessions (days/weeks)
+   - Use Instruments Memory Graph Debugger
+
+### Performance & Threading
+
+9. **Avoid Deadlocks**
+   - Use async channels (tokio mpsc)
+   - Set PTY to non-blocking I/O
+   - Never hold locks across thread boundaries
+   - Test high-frequency output scenarios
+
+10. **Performance Regression Testing**
+    - Benchmark terminal output throughput
+    - Track window resize latency
+    - Monitor tab creation time
+    - Use `cargo bench` for regression tracking
+
+### Protocol & Integration
+
+11. **Alternate Screen Buffer**
+    - Save/restore cursor position per buffer
+    - Save/restore SGR state
+    - Test tmux reattach scenarios
+    - Test with vim, less, htop
+
+12. **URL Detection**
+    - Support OSC 8 hyperlinks (standard)
+    - Use robust URL parser (not just regex)
+    - Test very long URLs (2048+ chars)
+    - Implement Cmd+Click correctly
+
+### Testing Strategy
+
+**Critical Test Cases**:
+1. High-frequency output (cat large file, find /)
+2. Long-running sessions (days/weeks)
+3. CJK input with Korean/Japanese IME
+4. Keybindings with non-US input sources
+5. tmux attach/detach cycles
+6. Alternate screen + window resize
+7. SSH disconnect during vim session
+8. Multiple tabs with simultaneous output
+9. Battery drain on dual-GPU MacBooks
+10. Memory usage over extended periods
+
+### Competitive Advantages
+
+Based on these bugs, Crux can differentiate by:
+1. **Perfect CJK/IME support** (Warp fails here)
+2. **Secure tmux integration** (iTerm2 had CVEs)
+3. **Efficient memory management** (Warp leaks badly)
+4. **Proper Korean input** (target market!)
+5. **Security-first architecture** (learn from CVEs)
+
+---
+
+## Summary Table (Resolved Issues)
+
+| Bug | Terminal | Severity | Fixed? | Crux Action |
+|-----|----------|----------|--------|-------------|
+| CVE-2019-9535 tmux RCE | iTerm2 | CRITICAL | ✅ 3.3.6 | Sanitize escape sequences |
+| CVE-2024-38396 Title RCE | iTerm2 | CRITICAL | ✅ 3.5.2 | Disable title reporting |
+| Metal + Transparency Ghosts | iTerm2 | Medium | ⚠️ Partial | Test early, proper clearing |
+| Metal Forces Discrete GPU | iTerm2 | Medium | ✅ Option added | Monitor battery drain |
+| GPU Battery Drain | Warp | High | ❌ Ongoing | Ensure idle GPU release |
+| Graphics Driver Crashes | Warp | Critical | ⚠️ Workaround | Test on multiple GPU types |
+| Emoji Variant Selector | iTerm2 | Medium | ✅ Improved | Query CoreText width |
+| CJK Keybindings Broken | Warp | High | ❌ Open since 2021 | **MAJOR opportunity** |
+| PTYTask Memory Leak | iTerm2 | Medium | ✅ Fixed | Watch Rc cycles |
+| Memory Leak (3.6GB+) | Warp | CRITICAL | ⚠️ Partial | Strict memory limits |
+| PTYTask Deadlock | iTerm2 | High | ✅ Architectural fix | Use async channels |
+| Performance Regression 3.5.0 | iTerm2 | High | ✅ 3.5.4beta1 | Regression testing |
+| Ligatures + Underline Slow | iTerm2 | High | ⚠️ Known limit | Decide on ligatures early |
+| GPU Changes Font Weight | iTerm2 | Medium | ⚠️ Improved | Test rendering quality |
+| Alternate Screen Corruption | iTerm2 | Medium | ✅ 3.0.7 | Test state machine |
+| SSH Bracketed Paste Bug | Warp | High | ✅ 2024 | Cleanup on disconnect |
+| tmux Not Supported | Warp | High | ❌ Open since 2021 | Implement securely |
+| URL Click Handling | Warp | Medium | ⚠️ Partial | Support OSC 8 |
+
+**Legend**: ✅ Fixed | ⚠️ Partial/Workaround | ❌ Not Fixed
+
+---
+
+## Additional References (Resolved Issues)
+
+### iTerm2
+- [Official Website](https://iterm2.com/)
+- [GitLab Repository](https://gitlab.com/gnachman/iterm2)
+- [Changelog](https://iterm2.com/appcasts/full_changes.txt)
+- [Metal Renderer Wiki](https://gitlab.com/gnachman/iterm2/-/wikis/Metal-Renderer)
+
+### Warp
+- [Official Website](https://www.warp.dev/)
+- [GitHub Repository](https://github.com/warpdotdev/Warp)
+- [Changelog](https://docs.warp.dev/getting-started/changelog)
+- [Known Issues](https://docs.warp.dev/support-and-billing/known-issues)
+
+### Security
+- [CVE-2019-9535 Details](https://nvd.nist.gov/vuln/detail/CVE-2019-9535)
+- [CVE-2024-38396 Details](https://nvd.nist.gov/vuln/detail/CVE-2024-38396)
+- [Mozilla Security Blog](https://blog.mozilla.org/security/2019/10/09/iterm2-critical-issue-moss-audit/)
+- [Vin01's Technical Blog](https://vin01.github.io/piptagole/escape-sequences/iterm2/rce/2024/06/16/iterm2-rce-window-title-tmux-integration.html)

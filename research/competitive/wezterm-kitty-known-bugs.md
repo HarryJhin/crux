@@ -1,6 +1,6 @@
 ---
 title: "Terminal Emulator Bugs & Issues — Lessons from WezTerm and Kitty"
-description: "Known bugs, design pitfalls, and anti-patterns in WezTerm and Kitty that Crux should avoid. Based on GitHub issues, user reports, and community discussions (2020-2026)."
+description: "Known bugs (open and resolved), design pitfalls, and anti-patterns in WezTerm and Kitty that Crux should avoid. Based on GitHub issues, user reports, and community discussions (2020-2026)."
 phase: "all"
 topics:
   - competitive-analysis
@@ -960,6 +960,714 @@ After analyzing 100+ GitHub issues, community discussions, and bug reports from 
 - [Warp #76: Discrete GPU](https://github.com/warpdotdev/Warp/issues/76)
 - [Terminal #13681: IME Preedit](https://github.com/microsoft/terminal/issues/13681)
 - [Alacritty #6313: Clear Preedit](https://github.com/alacritty/alacritty/issues/6313)
+
+---
+
+## Resolved Issues — Root Cause & Fix Analysis
+
+> 아래는 WezTerm, Kitty, Rio에서 **해결된** 주요 버그들의 근본 원인과 수정 방법 분석이다.
+> 수정 PR과 코드 레벨 교훈을 포함한다.
+
+---
+
+## WezTerm Bugs
+
+### 1. macOS Glyph Panic on Code-Signing (#6883)
+
+**Bug Description**: WezTerm crashes with `NSInternalInconsistencyException` when displaying placeholder glyphs for missing fonts on macOS.
+
+**Root Cause**:
+- Commit 9abf85c migrated macOS toast notifications from deprecated notification center to `UNUserNotificationCenter`
+- `UNUserNotificationCenter` requires proper code-signing to function
+- Unsigned builds (including Nixpkgs) attempt to access the notification center when displaying missing-glyph warnings
+- Stack trace shows: `bundleProxyForCurrentProcess is nil: mainBundle.bundleURL`
+
+**Fix**:
+- Identified as duplicate of #6731
+- Problem was in notification center implementation, not glyph-handling code
+- Requires proper Apple Developer account code-signing for distribution builds
+
+**Lesson for Crux**:
+- **Code-signing is mandatory for macOS system APIs**: Don't use `UNUserNotificationCenter` in unsigned builds
+- **Graceful degradation**: Fall back to alternative notification methods (NSUserNotification) for unsigned/dev builds
+- **Warning visibility**: Consider in-terminal warnings instead of system notifications to avoid this class of bugs
+- **Test unsigned builds**: Nixpkgs and homebrew formulas often build unsigned; test this scenario
+
+**References**:
+- [Issue #6883](https://github.com/wezterm/wezterm/issues/6883)
+- [Issue #6731](https://github.com/wezterm/wezterm/issues/6731)
+
+---
+
+### 2. Thread and Memory Leak on Window Spawn/Terminate (#6116)
+
+**Bug Description**: Each window spawn/terminate cycle leaks ~5 MB memory and 2 threads when reusing a single GUI instance.
+
+**Reproduction**:
+```bash
+for i in $(seq 1 200); do wezterm start -- sh -c 'exit 0'; done
+# RSS grows from ~300 MB to ~1.2 GB
+# Threads increase from 17 to 417
+```
+
+**Root Cause**:
+- Thread names indicate graphics driver threads, not WezTerm threads
+- Wayland surface cleanup issues: "queue destroyed while proxies still attached"
+- Graphics driver interaction with Wayland protocol handling
+- Potential connection to shader compilation in Glium graphics library
+
+**Fix**:
+- Issue closed after reporter disabled Wayland (`enable_wayland = false`)
+- Problem stemmed from dependency layers (graphics drivers, Wayland) not WezTerm core
+
+**Lesson for Crux**:
+- **Metal-only simplifies**: macOS Metal backend avoids multi-backend complexity that leads to leaks
+- **Window cleanup**: Ensure GPUI window disposal properly releases GPU resources
+- **Profile with instruments**: Use Xcode Instruments to detect thread/memory leaks in GPU code
+- **Test spawn/close cycles**: Automate testing of rapid window creation/destruction
+- **GPU context lifecycle**: Verify Metal device/command queue cleanup on window close
+
+**References**:
+- [Issue #6116](https://github.com/wezterm/wezterm/issues/6116)
+
+---
+
+### 3. Japanese IME Swallows Ctrl-O on macOS (#2725)
+
+**Bug Description**: Ctrl-O keystrokes consumed by Japanese IME, never reaching the application (e.g., Neovim jump list navigation).
+
+**Observations**:
+- WezTerm logs show `key: Char('o'), modifiers: CTRL` detected
+- Logs show "send to pane UP key=Char('o') mods=CTRL"
+- Despite logging the send, character never reaches PTY
+- Works correctly in iTerm2 and macOS Terminal
+
+**Root Cause**:
+- IME interaction with specific keyboard layouts on macOS
+- NSTextInputClient protocol implementation issue where IME intercepts control keys
+
+**Fix Status**:
+- Issue marked CLOSED/COMPLETED
+- Specific fix details not documented in visible discussion
+- Maintainer investigated keyboard layout configuration
+
+**Lesson for Crux**:
+- **IME must not intercept control keys**: Explicitly bypass IME for Ctrl/Cmd combinations (see `research/platform/ime-clipboard.md`)
+- **NSTextInputClient protocol**: Override `hasMarkedText` to return false during control key handling
+- **Test matrix**: Test IME with Ctrl combinations across Japanese, Korean, Chinese input methods
+- **Log vs reality**: Logging "sent to PTY" doesn't prove bytes reached the PTY; verify with PTY read
+- **Bypass IME for shortcuts**: Use `interpretKeyEvents:` selectively, not for all keystrokes
+
+**References**:
+- [Issue #2725](https://github.com/wezterm/wezterm/issues/2725)
+
+---
+
+### 4. Memory "Leaks" from HashMap Caching (#3815)
+
+**Bug Description**: Profiler reports ~2000 memory "leaks" within 22 seconds of launch on macOS.
+
+**Root Cause Analysis**:
+- NOT actual leaks, but legitimate long-lived allocations
+- `hashbrown` HashMap allocations for cached data retained throughout process lifetime
+- Intentional caching for performance optimization
+- Modern fonts with bitmap data occupy significant RAM
+- Real problem: Memory growth from repeated spawn/close (separate from initial allocations)
+
+**Developer Response**:
+- Maintainer (Wez Furlong) declined prioritization
+- Explained trade-off: caching reduces CPU overhead but increases memory
+- Suggested users explore cache tuning options
+- Closed as "not planned" due to lack of sponsorship funding
+
+**Lesson for Crux**:
+- **Distinguish leaks from retention**: Use Instruments to identify true leaks vs intentional caching
+- **Bounded caches**: Implement LRU eviction for font/glyph caches with configurable max size
+- **Memory budgets**: Define acceptable memory usage per window/tab
+- **Profiler interpretation**: macOS leaks tool flags retained memory; verify actual leak with heap growth over time
+- **Trade-offs documentation**: Document memory vs CPU performance trade-offs for users
+
+**References**:
+- [Issue #3815](https://github.com/wezterm/wezterm/issues/3815)
+- [Issue #2626](https://github.com/wezterm/wezterm/issues/2626)
+- [Issue #2453](https://github.com/wezterm/wezterm/issues/2453)
+
+---
+
+### 5. Font Shaping Performance Regression (#5280)
+
+**Bug Description**: Significant unresponsiveness and lag when using fonts with ligatures, even when ligatures disabled.
+
+**Profiling Findings**:
+- 84.3% CPU time in `wezterm_font::shaper::harfbuzz::HarfbuzzShaper::do_shape` with JetBrainsMono
+- Call chain: `do_shape → call_metric → FT_Load_Glyph → tt_glyph_load → load_truetype_glyph → TT_Hint_Glyph → TT_Runins`
+- Hack Nerd Font (no ligatures): only 24.1% CPU in same function
+- Problem: Unicode symbols (U+22C5) not in primary font triggered fallback to Menlo
+
+**Root Cause**:
+- Font fallback glyphs underwent repeated reshaping without caching
+- Aggressive font unloading mechanism removed "unused" fallback fonts prematurely
+- Caused repeated font reloading and reshaping cycles
+
+**Fix**:
+- Disabled premature font disposal for fallback fonts
+- Prevented font unloading mechanism from evicting actively-used fallbacks
+- Substantially improved performance by caching fallback font shapes
+
+**Lesson for Crux**:
+- **Cache fallback shapes**: Never re-shape the same glyph; cache by (font_id, codepoint, size)
+- **LRU for fallbacks**: Keep recently-used fallback fonts in memory
+- **Profile with realistic data**: Test with Unicode symbols requiring fallback (emoji, math symbols, CJK)
+- **FreeType hinting cost**: Hinting (TT_Hint_Glyph) is expensive; consider unhinted rendering for fallbacks
+- **Ligature independence**: Ensure fallback performance doesn't degrade even when primary font has ligatures
+- **GPUI font system**: Verify GPUI's font API caches shaped runs; supplement if needed
+
+**References**:
+- [Issue #5280](https://github.com/wezterm/wezterm/issues/5280)
+
+---
+
+### 6. IME and Dead Key Interaction (#1372)
+
+**Bug Description**: Bad interaction between `send_composed_key_when_left_alt_is_pressed`, IME, and dead keys on macOS.
+
+**Observations**:
+- Dead keys (e.g., Spanish ISO, U.S. International: ´ + a → á) inserted wrong character
+- Option key with IME active produced unexpected characters
+- Dead key expansion failed when `use_ime = false`
+
+**Fix**:
+- Marked as fixed in nightly builds
+- WezTerm now performs dead-key expansion when `use_ime = false`
+- Dead keys treated as composition effects
+- Configuration options: `send_composed_key_when_left_alt_is_pressed` and `use_ime`
+
+**Lesson for Crux**:
+- **Dead key handling**: Implement explicit dead key state machine separate from IME
+- **Option key routing**: macOS Option generates different keycodes; handle separately from IME composition
+- **Test international layouts**: Spanish, French, German, U.S. International keyboards for dead key coverage
+- **NSTextInputClient**: Override `validAttributesForMarkedText` to control IME vs dead key routing
+- **Configuration surface**: Let users choose IME vs dead key precedence for Option key
+
+**References**:
+- [Issue #1372](https://github.com/wezterm/wezterm/issues/1372)
+- [Issue #300](https://github.com/wezterm/wezterm/issues/300)
+- [Issue #5468](https://github.com/wezterm/wezterm/issues/5468)
+
+---
+
+### 7. Unicode Normalization Ignores Config (#3732)
+
+**Bug Description**: WezTerm always normalizes strings to NFC form regardless of `normalize_output_to_unicode_nfc = false` setting.
+
+**Impact**:
+- Editors like Neovim need strings displayed as-is
+- Cannot preserve NFD (decomposed) strings
+- Particularly affects CJK and Hangul characters in Korean filenames
+- macOS uses NFD for filesystem, breaking filename display
+
+**Root Cause**:
+- Configuration option documented but not actually preventing normalization
+- Normalization happens unconditionally in output pipeline
+
+**Lesson for Crux**:
+- **Preserve byte fidelity**: Don't normalize VT output unless explicitly configured
+- **macOS filename display**: macOS filesystem returns NFD; preserve or normalize consistently
+- **Configuration testing**: Verify config options actually change behavior (unit test each flag)
+- **Unicode test suite**: Test NFC, NFD, NFKC, NFKD with Korean/Japanese filenames
+- **Display vs filesystem**: Document when normalization happens (display vs filename comparison)
+
+**References**:
+- [Issue #3732](https://github.com/wezterm/wezterm/issues/3732)
+- [normalize_output_to_unicode_nfc config](https://wezterm.org/config/lua/config/normalize_output_to_unicode_nfc.html)
+
+---
+
+### 8. Scrollback Performance with Large Buffers (#1342, #6003)
+
+**Bug Description**: Large scrollback buffers (hundreds of thousands of lines) cause memory allocation failures and performance degradation.
+
+**Improvements**:
+- Internal scrollback datastructure improvements reduced per-cell overhead by up to 40x
+- Depends on line composition (varied attributes/image attachments = more overhead)
+
+**Limits**:
+- Upper bound: 999,999,999 for `scrollback_lines`
+- Larger values pressure system RAM with many long-lived tabs
+
+**Lesson for Crux**:
+- **Bounded scrollback**: Default to reasonable limit (10k-50k lines), allow configuration
+- **Compact representation**: Use dense storage for cells (bit-packing attributes, string deduplication)
+- **Lazy loading**: Consider disk-backed scrollback for very large buffers (à la tmux)
+- **Memory monitoring**: Warn user if scrollback exceeds memory budget
+- **Damage tracking**: Only render visible portion of scrollback, not entire buffer
+- **GPUI canvas**: Verify efficient rendering of large scrollback regions with virtualization
+
+**References**:
+- [Issue #1342](https://github.com/wezterm/wezterm/issues/1342)
+- [Issue #6003](https://github.com/wezterm/wezterm/issues/6003)
+- [Issue #3879](https://github.com/wezterm/wezterm/issues/3879)
+- [Scrollback documentation](https://wezterm.org/scrollback.html)
+
+---
+
+### 9. Multiplexer Domain Lockup on Large Output (#2048)
+
+**Bug Description**: When any buffer in a WezTerm multiplexer session receives large output, entire domain/session slows or fully locks with no recovery except force-kill.
+
+**Root Cause**:
+- Large stdout from PTY overwhelms multiplexer protocol
+- Backpressure not properly handled between mux server and clients
+- Domain-wide lock contention when one pane floods
+
+**Lesson for Crux**:
+- **Per-pane buffering**: Isolate pane buffers; one pane's flood shouldn't block others
+- **Backpressure**: Implement flow control between PTY read and renderer
+- **IPC batching**: Batch updates over Unix socket to avoid per-line overhead (see `research/integration/ipc-protocol-design.md`)
+- **Rate limiting**: Throttle VT parser when output exceeds threshold (e.g., `cat large.log`)
+- **Async rendering**: Decouple PTY reads from rendering; queue updates in background
+- **GPUI async**: Use GPUI's async task spawning to handle PTY I/O without blocking UI thread
+
+**References**:
+- [Issue #2048](https://github.com/wezterm/wezterm/issues/2048)
+- [Multiplexing documentation](https://wezterm.org/multiplexing.html)
+
+---
+
+### 10. Closing Panes Stops Input (#2304)
+
+**Bug Description**: Rapidly closing panes on macOS causes WezTerm to stop accepting keyboard input permanently.
+
+**Reproduction**:
+- Particularly in workflows like Kakoune editor with frequent pane creation/destruction
+- Input completely frozen; requires force-quit
+
+**Root Cause**:
+- macOS event loop interaction with pane cleanup
+- Focus management bug when removing NSView from hierarchy
+- Potential race between pane destruction and input routing
+
+**Lesson for Crux**:
+- **Focus restoration**: When closing pane, explicitly transfer focus to remaining pane
+- **Event loop safety**: Defer NSView removal until after event processing completes
+- **Input routing**: Verify keyboard responder chain after pane removal
+- **GPUI focus management**: Test GPUI's focus handling when removing views dynamically
+- **Async cleanup**: Delay resource cleanup until after current event cycle
+- **Test rapid operations**: Automate pane open/close cycles to catch race conditions
+
+**References**:
+- [Issue #2304](https://github.com/wezterm/wezterm/issues/2304)
+
+---
+
+### 11. macOS Window Freeze on Launch (#6833, #452)
+
+**Bug Description**: WezTerm freezes on launch with 100% CPU usage on macOS 15.4. Also: hangs for several seconds after consecutively opening and closing.
+
+**Observations**:
+- Completely unusable on some macOS versions
+- 100% CPU usage during freeze
+- Rapid open/close cycles trigger multi-second hangs
+
+**Root Cause**:
+- macOS version-specific interaction with window manager
+- Possible Metal/GPU initialization deadlock
+- Event loop blocking during window setup
+
+**Lesson for Crux**:
+- **Async initialization**: Perform GPU/Metal setup off main thread if possible
+- **Timeout guards**: Detect and recover from initialization hangs
+- **macOS version testing**: Test on beta macOS versions early (15.x betas available now)
+- **Metal device creation**: Profile Metal device/queue creation time; defer if expensive
+- **GPUI initialization**: Verify GPUI's window creation doesn't block on macOS 15+
+- **Launch watchdog**: Implement timeout for window appearance; alert user if stuck
+
+**References**:
+- [Issue #6833](https://github.com/wezterm/wezterm/issues/6833)
+- [Issue #452](https://github.com/wezterm/wezterm/issues/452)
+- [Issue #7051](https://github.com/wezterm/wezterm/issues/7051)
+
+---
+
+## Kitty Bugs
+
+### 12. tmux Ctrl-B Triggers CSI u on Old tmux (#3722)
+
+**Bug Description**: SSH to CentOS 7 with old tmux (1.8), pressing Ctrl-B shows `8;5u` instead of entering tmux control mode.
+
+**Root Cause**:
+- tmux 1.8 has buggy implementation that emits CSI u escape sequence
+- Kitty 0.20.0 introduced extended keyboard protocol (CSI u) support
+- Old tmux inadvertently activates Kitty's extended protocol through its own escape bug
+- Creates conflict where Ctrl-B is interpreted as keyboard protocol instead of tmux prefix
+
+**Solutions**:
+- **Modern tmux**: Upgrade to tmux 2.7+ (no longer emits buggy CSI u)
+- **Workaround for legacy**: `printf '\x1b[<u\x1b[<u'` to reset keyboard protocol
+- **Within tmux**: `printf '\ePtmux;\e\e[<u\e\\'` (wraps escape for tmux pass-through)
+- **Auto-fix**: Add to `.bashrc` in tmux sessions
+
+**Lesson for Crux**:
+- **Protocol opt-in**: Extended keyboard protocol should be explicit opt-in (CSI >1u), not auto-activated
+- **Escape sequence audit**: Test with old tmux, screen, legacy apps to avoid accidental protocol activation
+- **Protocol reset**: Provide escape sequence to reset to legacy mode (CSI <u)
+- **Compatibility matrix**: Document compatibility with tmux 1.8, 2.x, 3.x versions
+- **In-band protocol**: Careful with in-band protocol negotiation; prefer out-of-band (terminfo)
+
+**References**:
+- [Issue #3722](https://github.com/kovidgoyal/kitty/issues/3722)
+- [Keyboard Protocol documentation](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+
+---
+
+### 13. OSC 52 Clipboard Appends Instead of Replacing (#995)
+
+**Bug Description**: Running OSC 52 escape sequence twice results in duplicated clipboard content ("testtest" instead of "test").
+
+**Reproduction**:
+```bash
+printf "\033]52;c;$(printf "%s" "test" | base64)\a"
+printf "\033]52;c;$(printf "%s" "test" | base64)\a"
+# Clipboard: "testtest" (WRONG)
+```
+
+**Root Cause**:
+- `window.py` line 403 used compound assignment (`+=`) to append clipboard data
+- Should have used simple assignment (`=`) to replace
+
+**Fix**:
+- Initially: Changed `+=` to `=` for standard behavior
+- Later: Added "no-append" option to `clipboard_control` config
+- Maintains backward compatibility for users who preferred appending
+
+**Lesson for Crux**:
+- **OSC 52 semantics**: Each OSC 52 should SET clipboard, not APPEND (per spec)
+- **Test escape sequences**: Verify each OSC 52 invocation replaces clipboard
+- **macOS NSPasteboard**: Ensure `setPasteboardItems:` replaces, not appends
+- **Configuration**: Consider config for append behavior, but default to spec-compliant replace
+- **Security**: OSC 52 write-only by default; prompt for read to prevent clipboard snooping
+
+**References**:
+- [Issue #995](https://github.com/kovidgoyal/kitty/issues/995)
+- [Clipboard documentation](https://sw.kovidgoyal.net/kitty/clipboard/)
+
+---
+
+### 14. Cascadia Code Ligature Rendering Artifacts (#3504)
+
+**Bug Description**: Cascadia Code v2102.03+ ligatures render with missing characters, extra spacing, truncation, and occlusion.
+
+**Example**: `>>--->` shows gaps; repeated `#` symbols display with visible breaks.
+
+**Root Cause**:
+- Cascadia Code changed from "backwards looking" ligatures (negative left side bearing on final char) to "forwards looking" (first char contains ligature)
+- Kitty's glyph positioning logic didn't handle this shift
+- Ligatures rendered shorter than constituent characters (which include inter-char spacing)
+- Created mismatch: ligature visual width < sum of cell widths
+
+**Fix**:
+- Multiple commits to adjust glyph positioning calculations
+- Handle variable-width ligature substitutions properly
+- Resolved by version 0.21.2
+
+**Lesson for Crux**:
+- **Ligature testing**: Test with multiple fonts (Cascadia, JetBrains, Fira Code, Iosevka)
+- **Glyph metrics**: Use actual glyph advance width, not assumed cell-width multiplication
+- **HarfBuzz shaping**: Trust HarfBuzz cluster mapping for glyph positioning
+- **Font design evolution**: Fonts change bearing models; don't hardcode assumptions
+- **Visual testing**: Automated screenshot comparison for ligature rendering (prevent regressions)
+- **GPUI text layout**: Verify GPUI's `ShapedRun` correctly positions multi-cell ligatures
+
+**References**:
+- [Issue #3504](https://github.com/kovidgoyal/kitty/issues/3504)
+- [Issue #3313](https://github.com/kovidgoyal/kitty/issues/3313)
+
+---
+
+### 15. Emoji Variation Selector (VS16) Rendering Regression (#6774, #8318)
+
+**Bug Description**: Emoji with U+FE0F variation selector failed to render on macOS. Also: regression in 0.40.0 broke VS16 handling when character flows to next line.
+
+**Root Cause**:
+- macOS CoreText handles variation selectors specially
+- U+FE0F (VS16) hints renderer to use emoji variant
+- CoreText internally switches to Color Emoji font when detecting VS16
+- Kitty's font-matching logic conflicted with CoreText's internal switch
+- Line-wrapping code didn't account for VS16 as zero-width modifier
+
+**Fix**:
+- Version 0.38.1 fixed VS16 rendering
+- Version 0.40.0 introduced line-wrap regression (later fixed)
+- Proper handling of variation selectors as combining characters
+
+**Lesson for Crux**:
+- **CoreText emoji**: Let CoreText handle emoji font fallback automatically
+- **Zero-width modifiers**: VS16, skin tone modifiers (U+1F3FB-U+1F3FF) don't advance cursor
+- **Grapheme clusters**: Treat emoji + VS16 + skin tone as single grapheme for line breaking
+- **Test suite**: Include emoji with/without VS16, skin tone sequences, ZWJ sequences
+- **Unicode segmentation**: Use unicode-segmentation crate for grapheme cluster boundaries
+- **GPUI text shaping**: Verify GPUI's text layout handles variation selectors correctly
+
+**References**:
+- [Issue #6774](https://github.com/kovidgoyal/kitty/issues/6774)
+- [Issue #8318](https://github.com/kovidgoyal/kitty/issues/8318)
+- [Issue #2139](https://github.com/kovidgoyal/kitty/issues/2139)
+- [Changelog](https://sw.kovidgoyal.net/kitty/changelog/)
+
+---
+
+### 16. CJK Ambiguous Width Characters (#6560, #8265)
+
+**Bug Description**: Incorrect handling of CJK ambiguous width characters (UAX #11 East Asian Width property).
+
+**Root Cause**:
+- Unicode defines some characters as "Ambiguous" width (1 or 2 cells depending on context)
+- Legacy East Asian encodings render them as fullwidth
+- Modern Unicode context renders them as halfwidth
+- Lack of definitive method to determine correct width
+
+**Solution**:
+- Kitty version 0.40+ introduced text-sizing protocol
+- Allows programs to control character cell width explicitly
+- Solves long-standing ambiguous width problem robustly
+
+**Lesson for Crux**:
+- **Ambiguous width**: Default ambiguous characters to 1 cell (halfwidth) unless in CJK locale
+- **Configuration**: Provide `wcwidth` configuration for ambiguous characters
+- **Text-sizing protocol**: Consider implementing Kitty's text-sizing protocol for programmatic control
+- **Locale detection**: Use `LANG`/`LC_CTYPE` environment variables to infer CJK context
+- **Test cases**: Test with box-drawing, Greek, Cyrillic characters marked ambiguous
+- **wcwidth source**: Use up-to-date Unicode data; consider `unicode-width` crate
+
+**References**:
+- [Issue #6560](https://github.com/kovidgoyal/kitty/issues/6560)
+- [Issue #8265](https://github.com/kovidgoyal/kitty/issues/8265)
+- [Text-sizing protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/)
+
+---
+
+### 17. Image Protocol Background Flashing (#changelog)
+
+**Bug Description**: Background image flashes when closing a tab in Kitty.
+
+**Additional Issue**: Background opacity <1.0 causes flicker on startup with Wayland compositors supporting single pixel buffers.
+
+**Fix**:
+- Fixed background image flashing on tab close
+- Improved Wayland support for transparency to prevent startup flicker
+
+**Lesson for Crux**:
+- **GPU resource cleanup**: Ensure textures/framebuffers released before window/tab destruction
+- **Transparency compositing**: macOS compositor handles alpha differently than Wayland
+- **Metal layer opacity**: Set `CAMetalLayer.isOpaque` correctly based on background alpha
+- **GPUI transparency**: Verify GPUI's window transparency doesn't cause flicker
+- **Frame synchronization**: Use `CAMetalLayer` `presentsWithTransaction` to prevent tearing
+- **Testing**: Test tab close with images displayed to catch resource cleanup bugs
+
+**References**:
+- [Kitty changelog](https://sw.kovidgoyal.net/kitty/changelog/)
+- [Issue #7987](https://github.com/kovidgoyal/kitty/issues/7987)
+
+---
+
+### 18. Keyboard Protocol Modifier Key Disambiguation (#8211)
+
+**Bug Description**: Kitty keyboard protocol's "disambiguate escape codes" feature disabled VINTR/VSTOP signals, breaking Ctrl-C cancellation in some contexts.
+
+**Root Cause**:
+- Disambiguate flag means Ctrl-C delivered as CSI u escape instead of generating SIGINT
+- Applications expecting signal-based cancellation broke
+- Trade-off between disambiguation and traditional signal handling
+
+**Impact**:
+- fish shell reported Ctrl-C no longer interrupting commands
+- Programs relying on SIGINT signal handling affected
+
+**Lesson for Crux**:
+- **Protocol opt-in**: Extended keyboard protocol must be application opt-in, not default
+- **Signal preservation**: Ctrl-C, Ctrl-Z should generate signals by default
+- **Escape sequences**: Only send CSI u for Ctrl-C when app explicitly requests protocol
+- **Termios respect**: Honor termios VINTR, VSUSP, VQUIT character mappings
+- **Testing**: Test Ctrl-C in vim, emacs, bash, zsh, fish to verify signal delivery
+- **PTY semantics**: Don't bypass PTY driver's built-in signal generation
+
+**References**:
+- [Issue #8211](https://github.com/kovidgoyal/kitty/issues/8211)
+- [fish-shell issue #10864](https://github.com/fish-shell/fish-shell/issues/10864)
+- [Keyboard protocol spec](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+
+---
+
+## Rio Bugs
+
+### 19. CJK Characters Not Displayed on Line Break (#1013)
+
+**Bug Description**: CJK characters between special characters and end-of-line don't display when odd spaces remain.
+
+**Example**: Terminal with odd number of cells remaining → CJK character (2 cells wide) doesn't fit → fails to display instead of wrapping.
+
+**Root Cause**:
+- Character width calculation mismatch at line boundaries
+- CJK characters occupy 2 display columns
+- Odd number of remaining spaces (e.g., 1 cell) can't fit 2-cell character
+- Renderer failed to wrap; instead dropped character
+
+**Status**: Marked "In Progress" for Rio 0.2.x
+
+**Lesson for Crux**:
+- **Automatic wrapping**: When 2-cell CJK character doesn't fit, insert padding and wrap to next line
+- **wcwidth checking**: Before rendering, verify cell width fits remaining line space
+- **Padding cells**: Insert empty cell to fill odd space, then wrap CJK character
+- **Alacritty compatibility**: Check how `alacritty_terminal` handles this (Rio uses same VT parser)
+- **Test cases**: Lines ending with: `」` (2-cell) + space, emoji (2-cell), Korean Hangul
+- **GPUI line breaking**: Verify GPUI's text layout wraps wide characters correctly
+
+**References**:
+- [Issue #1013](https://github.com/raphamorim/rio/issues/1013)
+
+---
+
+### 20. Fallback Font for Unicode Characters (#266)
+
+**Bug Description**: FiraCode Nerd Font lacks Japanese character support → Japanese text (こんにちは、源氏です) renders as unrecognized glyphs.
+
+**Platform**: Windows 10 with WSL2 (couldn't reproduce on macOS, suggesting platform-specific font handling).
+
+**Solution**:
+- Added configuration-based fallback fonts: `[fonts] extra = ["font1", "font2"]`
+- Implemented system-level fallback font support for Windows
+- Before/after comparison showed Japanese rendering correctly after fix
+
+**Status**: Fixed in main branch
+
+**Lesson for Crux**:
+- **Fallback font chain**: Primary font → user-configured extras → system fallbacks
+- **Platform differences**: macOS CoreText handles fallbacks automatically; Windows/Linux need explicit list
+- **Configuration**: Allow `extra_fonts = ["Noto Sans CJK JP", "Apple Color Emoji"]`
+- **Font matching**: Use CoreText `CTFontCreateForString` on macOS for automatic fallback
+- **GPUI font system**: Verify GPUI's font API supports fallback chains
+- **Testing**: Test with emoji, Japanese, Korean, Arabic, Hebrew to verify fallback coverage
+- **Performance**: Cache fallback font lookups; don't re-query per character
+
+**References**:
+- [Issue #266](https://github.com/raphamorim/rio/issues/266)
+
+---
+
+## Cross-Cutting Lessons
+
+### Memory Management
+
+1. **Distinguish leaks from retention**: Use Instruments to identify true leaks vs intentional caching
+2. **Bounded caches**: Implement LRU eviction for font/glyph caches
+3. **Profile spawn/close cycles**: Automate testing of window creation/destruction
+4. **GPU resource cleanup**: Ensure Metal textures/buffers released properly
+
+### macOS Platform Integration
+
+5. **Code-signing mandatory**: System APIs like `UNUserNotificationCenter` require signing
+6. **CoreText integration**: Let CoreText handle emoji and fallback fonts automatically
+7. **NSTextInputClient**: Carefully implement IME protocol; bypass for control keys
+8. **Metal initialization**: Profile device/queue creation; consider async initialization
+
+### Font Rendering
+
+9. **Cache fallback shapes**: Never re-shape same glyph; cache by (font, codepoint, size)
+10. **LRU for fallbacks**: Keep recently-used fallback fonts in memory
+11. **Ligature positioning**: Trust HarfBuzz cluster mapping; test multiple fonts
+12. **Variation selectors**: Handle VS16 and skin tone modifiers as zero-width
+
+### IME and Keyboard
+
+13. **IME must not intercept control keys**: Explicitly bypass IME for Ctrl/Cmd combinations
+14. **Dead key state machine**: Implement separate from IME (Option key, international layouts)
+15. **Test matrix**: Japanese, Korean, Chinese IME with Ctrl combinations
+16. **Signal preservation**: Ctrl-C should generate SIGINT by default, not escape sequence
+
+### Unicode and Text
+
+17. **Preserve byte fidelity**: Don't normalize VT output unless configured
+18. **Ambiguous width**: Default to 1 cell; provide configuration for CJK context
+19. **Grapheme clusters**: Use unicode-segmentation for proper emoji/CJK boundaries
+20. **wcwidth accuracy**: Use up-to-date Unicode data for character width
+
+### Performance
+
+21. **Backpressure**: Implement flow control between PTY read and renderer
+22. **Damage tracking**: Only render changed cells, not entire buffer
+23. **Async rendering**: Decouple PTY I/O from UI thread with GPUI async tasks
+24. **Scrollback bounds**: Default to reasonable limit (10k-50k lines)
+
+### Protocol Compatibility
+
+25. **Protocol opt-in**: Extended features should be explicit opt-in, not auto-activated
+26. **Escape sequence audit**: Test with old tmux, screen, legacy apps
+27. **OSC 52 semantics**: Each invocation should SET, not APPEND (per spec)
+28. **terminfo correctness**: `xterm-crux` prefix critical for compatibility
+
+### Testing Strategy
+
+29. **Platform coverage**: Test on macOS 13, 14, 15 (including betas)
+30. **Visual regression**: Automated screenshot comparison for ligatures, emoji
+31. **International keyboards**: Spanish, French, German, U.S. International, Korean, Japanese
+32. **Rapid operations**: Automate window/pane/tab open/close cycles
+33. **Memory monitoring**: Long-running sessions with Instruments to detect leaks
+
+### GPUI-Specific
+
+34. **Window lifecycle**: Verify GPUI window disposal releases GPU resources
+35. **Focus management**: Test GPUI's focus handling when removing views
+36. **Text layout**: Verify ShapedRun correctly positions multi-cell ligatures
+37. **Transparency**: Test GPUI window transparency doesn't cause flicker
+38. **Async tasks**: Use GPUI's task spawning for PTY I/O without blocking UI
+
+---
+
+## Additional Resources
+
+### WezTerm
+- [WezTerm Issues](https://github.com/wezterm/wezterm/issues)
+- [WezTerm Changelog](https://wezterm.org/changelog.html)
+- [Font Rendering](https://github.com/wezterm/wezterm/issues/5280)
+- [Memory Leaks](https://github.com/wezterm/wezterm/issues/3815)
+- [IME Issues](https://github.com/wezterm/wezterm/issues/2725)
+
+### Kitty
+- [Kitty Issues](https://github.com/kovidgoyal/kitty/issues)
+- [Kitty Changelog](https://sw.kovidgoyal.net/kitty/changelog/)
+- [Keyboard Protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+- [Graphics Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
+- [tmux Compatibility](https://github.com/kovidgoyal/kitty/issues/3722)
+
+### Rio
+- [Rio Issues](https://github.com/raphamorim/rio/issues)
+- [Rio Changelog](https://rioterm.com/changelog)
+- [CJK Rendering](https://github.com/raphamorim/rio/issues/1013)
+- [Font Fallback](https://github.com/raphamorim/rio/issues/266)
+
+---
+
+## Summary Statistics
+
+**Total Issues Analyzed**: 20
+- **WezTerm**: 11 issues (memory leaks, font shaping, IME, scrollback, multiplexer)
+- **Kitty**: 7 issues (keyboard protocol, clipboard, ligatures, emoji, CJK width)
+- **Rio**: 2 issues (CJK rendering, font fallback)
+
+**Categories**:
+- **Font Rendering**: 6 issues
+- **Memory/Performance**: 4 issues
+- **IME/Keyboard**: 5 issues
+- **Platform (macOS)**: 4 issues
+- **Unicode/Text**: 3 issues
+- **Protocol/Compatibility**: 3 issues
+
+**Key Takeaway for Crux**: The most critical lessons are:
+1. **macOS IME**: Never let IME intercept control keys (research/platform/ime-clipboard.md)
+2. **Font fallback caching**: Biggest performance win for mixed content
+3. **Code-signing**: Required for system APIs; test unsigned builds
+4. **Unicode handling**: Preserve byte fidelity, support variation selectors
+5. **GPUI integration**: Verify focus, text layout, and GPU resource cleanup
 
 ---
 
