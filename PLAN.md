@@ -720,6 +720,14 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - [ ] Ambiguous width preference
 - [ ] Window opacity, blur, decorations
 - [ ] MCP security policy (allowed tools, command whitelist/blocklist)
+- [ ] OS theme mode (`theme_mode`: auto/light/dark — macOS appearance 연동)
+- [ ] Bell settings: audible bell toggle, visual bell (flash) with duration/color
+- [ ] Session restore on launch (window/tab/pane state persistence)
+- [ ] Tab display settings (indicator toggle, title format)
+- [ ] Global hotkey / Quake mode (system-wide toggle key, position, size)
+- [ ] Integrated GPU preference (`prefer_integrated_gpu` for battery saving)
+- [ ] Long-running command notifications (threshold, macOS notification center)
+- [ ] Autosuggestion toggle (fish-style history-based, Phase 2 dependency)
 
 #### Hot Reload
 - [ ] File system watcher via `notify` crate (watch parent directory for atomic saves)
@@ -732,12 +740,13 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - [ ] Native settings window built with gpui-component widgets
 - [ ] Bidirectional sync: GUI edits → write TOML, TOML edits → update GUI
 - [ ] Tab-based layout:
-  - [ ] **General** — shell, startup behavior, working directory
-  - [ ] **Appearance** — font family/size picker, color picker, theme selector, opacity slider, blur toggle
-  - [ ] **Terminal** — scrollback, cursor style/blink, mouse mode
+  - [ ] **General** — shell, startup behavior, working directory, session restore, notifications
+  - [ ] **Appearance** — font family/size picker, color picker, theme selector (+ OS sync), opacity slider, blur toggle
+  - [ ] **Terminal** — scrollback, cursor style/blink, mouse mode, bell (audible/visual), global hotkey
   - [ ] **Keybindings** — visual key recorder, conflict detection, searchable list
   - [ ] **IME** — input source, Vim auto-switch toggle, composition overlay style
   - [ ] **MCP** — security policy, allowed tools, socket path
+  - [ ] **Performance** — integrated GPU preference, rendering diagnostics
 - [ ] Live preview — changes apply in real-time as user adjusts settings
 - [ ] No "Apply" button — direct write to config.toml on every change
 - [ ] "Open Config File" button — open TOML in user's editor

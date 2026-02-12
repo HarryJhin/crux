@@ -39,7 +39,8 @@ research/
 │   └── mcp-integration.md        ★ MCP 통합: rmcp SDK, 30개 도구 설계, 아키텍처
 ├── competitive/              ← ★ 경쟁 분석 (신규)
 │   ├── ghostty-warp-analysis.md  Ghostty 아키텍처 + Warp 대체 분석 + 포지셔닝
-│   └── terminal-structures.md    ★ 5대 터미널 프로젝트 구조 비교 (Alacritty/WezTerm/Rio/Ghostty/Zed)
+│   ├── terminal-structures.md    ★ 5대 터미널 프로젝트 구조 비교 (Alacritty/WezTerm/Rio/Ghostty/Zed)
+│   └── warp-settings-analysis.md ★ Warp 설정 기능 조사 및 Crux 채택 분석
 ├── testing/                  ← ★ 테스팅 인프라 (신규)
 │   └── ai-agent-testing.md       AI 에이전트 테스팅: MCP 도구 7개, 셀프 테스팅, CI/CD
 └── platform/                 ← macOS 플랫폼 네이티브
@@ -116,6 +117,7 @@ research/
 |----------|------------|
 | [competitive/ghostty-warp-analysis.md](competitive/ghostty-warp-analysis.md) | ★ Ghostty 아키텍처, Warp 대체 분석, 포지셔닝 |
 | [competitive/terminal-structures.md](competitive/terminal-structures.md) | ★ 프로젝트 구조 비교: 크레이트 분리, 렌더링, 최적화 패턴 |
+| [competitive/warp-settings-analysis.md](competitive/warp-settings-analysis.md) | ★ Warp 설정 기능 조사: 채택 우선순위, TOML 확장 제안 |
 
 ### Future: Accessibility
 | Document | Key Topics |
@@ -153,6 +155,7 @@ research/
 | **성능 최적화** | [core/performance.md](core/performance.md) | [gpui/framework.md](gpui/framework.md) |
 | **하이퍼링크 (OSC 8)** | [core/hyperlinks.md](core/hyperlinks.md) | [core/terminal-emulation.md](core/terminal-emulation.md) |
 | **경쟁 분석/포지셔닝** | [competitive/ghostty-warp-analysis.md](competitive/ghostty-warp-analysis.md) | [competitive/terminal-structures.md](competitive/terminal-structures.md) |
+| **설정 시스템 (Warp 참고)** | [competitive/warp-settings-analysis.md](competitive/warp-settings-analysis.md) | [core/config-system.md](core/config-system.md) |
 | **누락 영역 확인** | [gap-analysis.md](gap-analysis.md) | 전체 |
 
 ---
@@ -204,6 +207,8 @@ competitive/terminal-structures ★ ──► core/terminal-architecture
                                  ──► core/performance
                                  ──► gpui/terminal-implementations
 
+competitive/warp-settings-analysis ★ ──► core/config-system
+
 testing/ai-agent-testing ★ ──► integration/mcp-integration
                           ──► integration/claude-code-strategy
                           ──► core/terminal-emulation
@@ -220,5 +225,6 @@ testing/ai-agent-testing ★ ──► integration/mcp-integration
 - **testing/ 디렉토리 신규**: AI 에이전트 테스팅 인프라 문서. 7개 테스팅 MCP 도구, 셀프 테스팅 아키텍처, golden state 비교, CI/CD 4계층 전략, esctest2/vtebench/insta 통합.
 - **core/ 문서 확장**: 초기 4개 → 14개로 확장. 최근 그래픽스 프로토콜, tmux 호환성 문서 추가.
 - **competitive/ 디렉토리 확장**: Ghostty/Warp 분석에 이어 5대 터미널(Alacritty, WezTerm, Rio, Ghostty, Zed) 프로젝트 구조 비교 문서 추가. 크레이트 분리 전략, 렌더링 파이프라인, 성능 최적화 패턴의 횡단 비교 제공.
+- **competitive/ 디렉토리 3번째 문서**: Warp 설정 기능 조사. Crux config-system.md와 교차 비교하여 채택 가능 설정 항목 12개 식별, TOML 스키마 확장 제안.
 - **gap-analysis.md**: 3차 업데이트 완료 (status: current). Critical 갭 해소율 79% (11/14).
 - **keymapping.md 보강**: §16에 Kitty Keyboard Protocol 상세 (~307줄) 추가. CSI u 포맷, 5개 Flag, 스택 메커니즘 포함.
