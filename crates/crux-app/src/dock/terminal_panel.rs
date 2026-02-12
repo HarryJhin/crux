@@ -30,13 +30,14 @@ impl CruxTerminalPanel {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        // Safety: GPUI runs on the macOS main thread exclusively. Panel creation
-        // and PTY spawning are synchronous within a single GPUI update cycle,
-        // so no concurrent panel creation can interleave between set_var and
-        // the child process inheriting the env. This is safe as long as GPUI
-        // remains single-threaded (which is a macOS AppKit requirement).
-        std::env::set_var("CRUX_PANE", pane_id.0.to_string());
-        std::env::set_var("TERM_PROGRAM", "Crux");
+        // SAFETY: Called from main thread during panel creation.
+        // CRUX_PANE is only read by child processes spawned after this point.
+        // GPUI runs on the macOS main thread exclusively, so no concurrent
+        // readers of these environment variables exist.
+        unsafe {
+            std::env::set_var("CRUX_PANE", pane_id.0.to_string());
+            std::env::set_var("TERM_PROGRAM", "Crux");
+        }
 
         let terminal_view = cx.new(|cx| CruxTerminalView::new_with_options(cwd, command, env, cx));
 

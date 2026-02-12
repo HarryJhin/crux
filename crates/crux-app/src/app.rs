@@ -5,7 +5,6 @@ use std::sync::Arc;
 use gpui::*;
 use gpui_component::dock::{DockArea, DockItem, DockPlacement, PanelView, TabPanel, ToggleZoom};
 use gpui_component::Placement;
-use tokio::sync::mpsc;
 
 use crux_ipc::IpcCommand;
 use crux_protocol::{PaneEvent, PaneId};
@@ -16,7 +15,6 @@ use crate::dock::terminal_panel::CruxTerminalPanel;
 /// Top-level application view managing the DockArea with terminal panels.
 pub struct CruxApp {
     dock_area: Entity<DockArea>,
-    ipc_rx: Option<mpsc::Receiver<IpcCommand>>,
     /// Kept for socket cleanup on drop.
     _socket_path: Option<std::path::PathBuf>,
     pane_registry: HashMap<PaneId, Entity<CruxTerminalPanel>>,
@@ -33,10 +31,11 @@ impl CruxApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Start IPC server.
         let (socket_path, ipc_rx) = match crux_ipc::start_ipc() {
-            Ok((path, rx)) => {
+            Ok((path, rx, _cancel_token)) => {
                 log::info!("IPC server started at {}", path.display());
-                // Set env var so child processes inherit it.
-                std::env::set_var("CRUX_SOCKET", &path);
+                // SAFETY: Called during app initialization before any background threads are spawned.
+                // No concurrent readers of this environment variable exist at this point.
+                unsafe { std::env::set_var("CRUX_SOCKET", &path) };
                 (Some(path), Some(rx))
             }
             Err(e) => {
@@ -67,9 +66,28 @@ impl CruxApp {
             area.set_center(dock_item, window, cx);
         });
 
+        // Move IPC command processing to an async task instead of polling in render().
+        if let Some(mut ipc_cmd_rx) = ipc_rx {
+            cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
+                while let Some(cmd) = ipc_cmd_rx.recv().await {
+                    let result = cx.update(|window, app| {
+                        if let Some(entity) = this.upgrade() {
+                            entity.update(app, |self_, ctx| {
+                                self_.handle_ipc_command(cmd, window, ctx);
+                                ctx.notify();
+                            });
+                        }
+                    });
+                    if result.is_err() {
+                        break; // Window or entity dropped
+                    }
+                }
+            })
+            .detach();
+        }
+
         Self {
             dock_area,
-            ipc_rx,
             _socket_path: socket_path,
             pane_registry,
             next_pane_id: AtomicU64::new(1),
@@ -466,40 +484,6 @@ impl CruxApp {
             .collect()
     }
 
-    /// Poll the IPC command channel and dispatch commands.
-    /// Called from render() so commands are processed each frame.
-    fn poll_ipc_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Collect commands first to avoid borrow conflict with self.
-        let mut commands = Vec::new();
-        let mut disconnected = false;
-
-        if let Some(rx) = &mut self.ipc_rx {
-            for _ in 0..16 {
-                match rx.try_recv() {
-                    Ok(cmd) => commands.push(cmd),
-                    Err(mpsc::error::TryRecvError::Empty) => break,
-                    Err(mpsc::error::TryRecvError::Disconnected) => {
-                        log::warn!("IPC command channel disconnected");
-                        disconnected = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if disconnected {
-            self.ipc_rx = None;
-        }
-
-        // Process collected commands.
-        if !commands.is_empty() {
-            for cmd in commands {
-                self.handle_ipc_command(cmd, window, cx);
-            }
-            cx.notify();
-        }
-    }
-
     fn handle_ipc_command(&mut self, cmd: IpcCommand, window: &mut Window, cx: &mut Context<Self>) {
         match cmd {
             IpcCommand::Handshake { params: _, reply } => {
@@ -775,9 +759,7 @@ impl CruxApp {
 }
 
 impl Render for CruxApp {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.poll_ipc_commands(window, cx);
-
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("crux-app")
             .size_full()

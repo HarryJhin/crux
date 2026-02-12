@@ -3,7 +3,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-use crux_protocol::{decode_frame, encode_frame, JsonRpcRequest, JsonRpcResponse};
+use crux_protocol::{decode_frame, encode_frame, JsonRpcId, JsonRpcRequest, JsonRpcResponse};
 
 /// Connect to a running Crux IPC server.
 pub fn connect() -> Result<IpcClient> {
@@ -41,9 +41,9 @@ impl IpcClient {
         let id = self.next_id;
         self.next_id += 1;
 
-        let request = JsonRpcRequest::new(id, method, Some(params));
+        let request = JsonRpcRequest::new(JsonRpcId::Number(id), method, Some(params));
         let req_bytes = serde_json::to_vec(&request)?;
-        let frame = encode_frame(&req_bytes);
+        let frame = encode_frame(&req_bytes)?;
 
         self.stream.write_all(&frame)?;
         self.stream.flush()?;
@@ -59,7 +59,7 @@ impl IpcClient {
             }
             pending.extend_from_slice(&buf[..n]);
 
-            if let Some((_consumed, payload)) = decode_frame(&pending) {
+            if let Some((_consumed, payload)) = decode_frame(&pending)? {
                 let response: JsonRpcResponse = serde_json::from_slice(&payload)?;
                 if let Some(err) = response.error {
                     bail!("server error {}: {}", err.code, err.message);
