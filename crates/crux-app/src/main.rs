@@ -31,6 +31,7 @@ fn main() {
         cx.bind_keys([
             KeyBinding::new("cmd-t", actions::NewTab, None),
             KeyBinding::new("cmd-w", actions::CloseTab, None),
+            KeyBinding::new("cmd-shift-w", actions::ForceCloseTab, None),
             KeyBinding::new("ctrl-tab", actions::NextTab, None),
             KeyBinding::new("ctrl-shift-tab", actions::PrevTab, None),
             KeyBinding::new("cmd-d", actions::SplitRight, None),
@@ -175,6 +176,36 @@ fn run_cli(action: cli::commands::CliAction) -> anyhow::Result<()> {
                 force,
             };
             client.call(method::PANE_CLOSE, serde_json::to_value(&params)?)?;
+        }
+
+        CliAction::WindowCreate {
+            title,
+            width,
+            height,
+        } => {
+            let params = WindowCreateParams {
+                title,
+                width,
+                height,
+            };
+            let result = client.call(method::WINDOW_CREATE, serde_json::to_value(&params)?)?;
+            let result: WindowCreateResult = serde_json::from_value(result)?;
+            println!("{}", result.window_id);
+        }
+
+        CliAction::WindowList { format } => {
+            let result = client.call(method::WINDOW_LIST, serde_json::json!({}))?;
+            let result: WindowListResult = serde_json::from_value(result)?;
+            if format == "json" {
+                println!("{}", serde_json::to_string_pretty(&result.windows)?);
+            } else {
+                for w in &result.windows {
+                    println!(
+                        "Window {} | {} panes | focused={}",
+                        w.window_id, w.pane_count, w.is_focused
+                    );
+                }
+            }
         }
     }
 

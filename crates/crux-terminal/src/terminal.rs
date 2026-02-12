@@ -404,6 +404,20 @@ impl CruxTerminal {
     pub fn selection_to_string(&self) -> Option<String> {
         self.term.lock().selection_to_string()
     }
+
+    /// Check if the child process is still running.
+    pub fn is_process_running(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(Some(_)) => false,
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Get the child process PID.
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child.process_id()
+    }
 }
 
 impl Drop for CruxTerminal {

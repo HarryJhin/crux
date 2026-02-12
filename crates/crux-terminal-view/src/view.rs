@@ -530,6 +530,16 @@ impl CruxTerminalView {
         });
     }
 
+    /// Check if the terminal's child process is still running.
+    pub fn is_process_running(&mut self) -> bool {
+        self.terminal.is_process_running()
+    }
+
+    /// Get the child process PID.
+    pub fn child_pid(&self) -> Option<u32> {
+        self.terminal.child_pid()
+    }
+
     /// Write data to the terminal's PTY.
     pub fn write_to_pty(&mut self, data: &[u8]) {
         self.terminal.write_to_pty(data);

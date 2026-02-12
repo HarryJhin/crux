@@ -101,6 +101,12 @@ impl CruxTerminalPanel {
         });
     }
 
+    /// Check if the terminal's child process is still running.
+    pub fn is_process_running(&mut self, cx: &mut Context<Self>) -> bool {
+        self.terminal_view
+            .update(cx, |view, _cx| view.is_process_running())
+    }
+
     /// Scroll to the next prompt in the terminal scrollback.
     pub fn scroll_to_next_prompt(&self, cx: &mut Context<Self>) {
         self.terminal_view.update(cx, |view, _cx| {
