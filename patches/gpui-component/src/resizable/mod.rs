@@ -196,7 +196,7 @@ impl ResizableState {
 
     /// The `ix`` is the index of the panel to resize,
     /// and the `size` is the new size for the panel.
-    fn resize_panel(&mut self, ix: usize, size: Pixels, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn resize_panel(&mut self, ix: usize, size: Pixels, _: &mut Window, cx: &mut Context<Self>) {
         let old_sizes = self.sizes.clone();
 
         let mut ix = ix;

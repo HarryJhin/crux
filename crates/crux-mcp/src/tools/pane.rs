@@ -37,15 +37,14 @@ pub struct FocusPaneParams {
     pub pane_id: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ResizePaneParams {
     /// Pane ID to resize
     pub pane_id: u64,
-    /// Number of rows
-    pub rows: u32,
-    /// Number of columns
-    pub cols: u32,
+    /// Desired width in pixels
+    pub width: Option<f32>,
+    /// Desired height in pixels
+    pub height: Option<f32>,
 }
 
 pub(crate) fn router() -> rmcp::handler::server::router::tool::ToolRouter<CruxMcpServer> {
@@ -147,14 +146,31 @@ impl CruxMcpServer {
         )]))
     }
 
-    /// Resize a terminal pane.
-    #[tool(description = "Resize a terminal pane (not yet supported)")]
+    /// Resize a terminal pane by specifying width and/or height in pixels.
+    #[tool(description = "Resize a terminal pane by specifying width and/or height in pixels")]
     async fn crux_resize_pane(
         &self,
-        Parameters(_params): Parameters<ResizePaneParams>,
+        Parameters(params): Parameters<ResizePaneParams>,
     ) -> Result<CallToolResult, McpError> {
+        let ipc = self.ipc.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut p = serde_json::json!({
+                "pane_id": params.pane_id,
+            });
+            if let Some(w) = params.width {
+                p["width"] = serde_json::json!(w);
+            }
+            if let Some(h) = params.height {
+                p["height"] = serde_json::json!(h);
+            }
+            ipc.call(crux_protocol::method::PANE_RESIZE, p)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
+        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+
         Ok(CallToolResult::success(vec![Content::text(
-            "pane resize is not yet supported",
+            serde_json::to_string_pretty(&result).unwrap_or_else(|_| "pane resized".into()),
         )]))
     }
 }
@@ -232,14 +248,14 @@ mod tests {
     fn test_resize_pane_params_serde() {
         let params = ResizePaneParams {
             pane_id: 1,
-            rows: 24,
-            cols: 80,
+            width: Some(400.0),
+            height: Some(300.0),
         };
         let json = serde_json::to_string(&params).unwrap();
         let parsed: ResizePaneParams = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.pane_id, 1);
-        assert_eq!(parsed.rows, 24);
-        assert_eq!(parsed.cols, 80);
+        assert_eq!(parsed.width, Some(400.0));
+        assert_eq!(parsed.height, Some(300.0));
     }
 
 }

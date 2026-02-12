@@ -27,6 +27,9 @@ fn main() {
     application.run(move |cx: &mut App| {
         gpui_component::init(cx);
 
+        // Register panel factory for session restore.
+        dock::terminal_panel::register(cx);
+
         // Register keybindings.
         cx.bind_keys([
             KeyBinding::new("cmd-t", actions::NewTab, None),

@@ -400,6 +400,13 @@ impl StackPanel {
         });
     }
 
+    /// Resize the panel at the given index to the specified size in pixels.
+    pub fn resize_panel_at(&mut self, ix: usize, size: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.resize_panel(ix, size, window, cx);
+        });
+    }
+
     /// Change the axis of the stack panel.
     pub(super) fn set_axis(&mut self, axis: Axis, _: &mut Window, cx: &mut Context<Self>) {
         self.axis = axis;
