@@ -4,7 +4,7 @@ use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
 
 use crate::server::CruxMcpServer;
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct CreatePaneParams {
     /// Split direction: right, left, top, bottom
     #[schemars(description = "Split direction: right, left, top, bottom")]
@@ -15,7 +15,7 @@ pub struct CreatePaneParams {
     pub command: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ClosePaneParams {
     /// Pane ID to close
     pub pane_id: u64,
@@ -23,14 +23,14 @@ pub struct ClosePaneParams {
     pub force: Option<bool>,
 }
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct FocusPaneParams {
     /// Pane ID to focus
     pub pane_id: u64,
 }
 
 #[allow(dead_code)]
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ResizePaneParams {
     /// Pane ID to resize
     pub pane_id: u64,
@@ -143,4 +143,80 @@ impl CruxMcpServer {
             "pane resize is not yet supported",
         )]))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_pane_params_serde() {
+        let params = CreatePaneParams {
+            direction: Some("right".into()),
+            cwd: Some("/tmp".into()),
+            command: Some("ls".into()),
+        };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: CreatePaneParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.direction, Some("right".into()));
+        assert_eq!(parsed.cwd, Some("/tmp".into()));
+        assert_eq!(parsed.command, Some("ls".into()));
+    }
+
+    #[test]
+    fn test_create_pane_params_optional_fields() {
+        let params = CreatePaneParams {
+            direction: None,
+            cwd: None,
+            command: None,
+        };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: CreatePaneParams = serde_json::from_str(&json).unwrap();
+        assert!(parsed.direction.is_none());
+        assert!(parsed.cwd.is_none());
+        assert!(parsed.command.is_none());
+    }
+
+    #[test]
+    fn test_close_pane_params_serde() {
+        let params = ClosePaneParams {
+            pane_id: 42,
+            force: Some(true),
+        };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: ClosePaneParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.pane_id, 42);
+        assert_eq!(parsed.force, Some(true));
+    }
+
+    #[test]
+    fn test_close_pane_params_force_default() {
+        let json = r#"{"pane_id": 99}"#;
+        let parsed: ClosePaneParams = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.pane_id, 99);
+        assert_eq!(parsed.force, None);
+    }
+
+    #[test]
+    fn test_focus_pane_params_serde() {
+        let params = FocusPaneParams { pane_id: 123 };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: FocusPaneParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.pane_id, 123);
+    }
+
+    #[test]
+    fn test_resize_pane_params_serde() {
+        let params = ResizePaneParams {
+            pane_id: 1,
+            rows: 24,
+            cols: 80,
+        };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: ResizePaneParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.pane_id, 1);
+        assert_eq!(parsed.rows, 24);
+        assert_eq!(parsed.cols, 80);
+    }
+
 }

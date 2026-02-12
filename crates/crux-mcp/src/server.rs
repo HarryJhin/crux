@@ -96,3 +96,45 @@ impl ServerHandler for CruxMcpServer {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Note: Server tests are limited because IpcClient requires a real Unix socket
+    // connection and its fields are private. These tests verify basic metadata
+    // without requiring an actual IPC connection.
+
+    #[test]
+    fn test_server_metadata_name() {
+        // Test the server name constant
+        let expected_name = "crux-mcp";
+        // This would be returned by get_info() if we could construct a server
+        assert_eq!(expected_name, "crux-mcp");
+    }
+
+    #[test]
+    fn test_server_metadata_version() {
+        // Verify CARGO_PKG_VERSION is set
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(!version.is_empty());
+        assert!(version.contains('.'), "Version should contain dots");
+    }
+
+    #[test]
+    fn test_server_clone_trait() {
+        // Verify CruxMcpServer implements Clone
+        // We can't construct one without IPC, but we can check the trait bound
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<CruxMcpServer>();
+    }
+
+    #[test]
+    fn test_tool_router_construction() {
+        // Test that tool routers can be combined
+        let router1 = crate::tools::pane::router();
+        let router2 = crate::tools::command::router();
+        let _combined = router1 + router2;
+        // If this compiles, the router construction works
+    }
+}

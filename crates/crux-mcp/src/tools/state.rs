@@ -4,13 +4,13 @@ use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
 
 use crate::server::CruxMcpServer;
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct PaneIdParam {
     /// Pane ID (uses active pane if omitted)
     pub pane_id: Option<u64>,
 }
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ScrollbackParams {
     /// Pane ID (uses active pane if omitted)
     pub pane_id: Option<u64>,
@@ -179,5 +179,156 @@ fn extract_lines(result: &serde_json::Value) -> String {
             .join("\n")
     } else {
         serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pane_id_param_serde() {
+        let params = PaneIdParam { pane_id: Some(42) };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: PaneIdParam = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.pane_id, Some(42));
+    }
+
+    #[test]
+    fn test_pane_id_param_none() {
+        let params = PaneIdParam { pane_id: None };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: PaneIdParam = serde_json::from_str(&json).unwrap();
+        assert!(parsed.pane_id.is_none());
+    }
+
+    #[test]
+    fn test_scrollback_params_serde() {
+        let params = ScrollbackParams {
+            pane_id: Some(1),
+            offset: Some(-100),
+            limit: Some(50),
+        };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: ScrollbackParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.pane_id, Some(1));
+        assert_eq!(parsed.offset, Some(-100));
+        assert_eq!(parsed.limit, Some(50));
+    }
+
+    #[test]
+    fn test_scrollback_params_all_none() {
+        let params = ScrollbackParams {
+            pane_id: None,
+            offset: None,
+            limit: None,
+        };
+        let json = serde_json::to_string(&params).unwrap();
+        let parsed: ScrollbackParams = serde_json::from_str(&json).unwrap();
+        assert!(parsed.pane_id.is_none());
+        assert!(params.offset.is_none());
+        assert!(params.limit.is_none());
+    }
+
+    #[test]
+    fn test_find_pane_by_id() {
+        let list_result = serde_json::json!({
+            "panes": [
+                {"pane_id": 1, "is_active": false},
+                {"pane_id": 42, "is_active": true},
+                {"pane_id": 99, "is_active": false}
+            ]
+        });
+        let pane = find_pane(&list_result, Some(42)).unwrap();
+        assert_eq!(pane.get("pane_id").unwrap().as_u64(), Some(42));
+    }
+
+    #[test]
+    fn test_find_pane_active_when_no_id() {
+        let list_result = serde_json::json!({
+            "panes": [
+                {"pane_id": 1, "is_active": false},
+                {"pane_id": 42, "is_active": true},
+                {"pane_id": 99, "is_active": false}
+            ]
+        });
+        let pane = find_pane(&list_result, None).unwrap();
+        assert_eq!(pane.get("pane_id").unwrap().as_u64(), Some(42));
+        assert_eq!(pane.get("is_active").unwrap().as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_find_pane_first_when_no_active() {
+        let list_result = serde_json::json!({
+            "panes": [
+                {"pane_id": 1, "is_active": false},
+                {"pane_id": 2, "is_active": false}
+            ]
+        });
+        let pane = find_pane(&list_result, None).unwrap();
+        assert_eq!(pane.get("pane_id").unwrap().as_u64(), Some(1));
+    }
+
+    #[test]
+    fn test_find_pane_not_found() {
+        let list_result = serde_json::json!({
+            "panes": [
+                {"pane_id": 1, "is_active": false},
+                {"pane_id": 2, "is_active": false}
+            ]
+        });
+        let result = find_pane(&list_result, Some(999));
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("pane 999 not found"));
+    }
+
+    #[test]
+    fn test_find_pane_empty_list() {
+        let list_result = serde_json::json!({
+            "panes": []
+        });
+        let result = find_pane(&list_result, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("no panes available"));
+    }
+
+    #[test]
+    fn test_find_pane_invalid_format() {
+        let list_result = serde_json::json!({
+            "panes": "not an array"
+        });
+        let result = find_pane(&list_result, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("unexpected pane list format"));
+    }
+
+    #[test]
+    fn test_find_pane_missing_panes_field() {
+        let list_result = serde_json::json!({
+            "data": []
+        });
+        let result = find_pane(&list_result, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_lines_with_lines() {
+        let result = serde_json::json!({
+            "lines": ["line 1", "line 2", "line 3"]
+        });
+        let output = extract_lines(&result);
+        assert_eq!(output, "line 1\nline 2\nline 3");
+    }
+
+    #[test]
+    fn test_extract_lines_without_lines() {
+        let result = serde_json::json!({
+            "data": "value"
+        });
+        let output = extract_lines(&result);
+        assert!(output.contains("\"data\""));
     }
 }

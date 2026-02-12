@@ -99,3 +99,57 @@ fn find_socket() -> Result<PathBuf> {
 
     bail!("no running Crux instance found. Is Crux running?")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_connect_with_retry_at_least_one_attempt() {
+        // Attempting to connect with at least 1 attempt should try to connect.
+        // This will fail (no running Crux instance), but it should not panic.
+        let result = IpcClient::connect_with_retry(1);
+        assert!(result.is_err(), "connect_with_retry should fail without running Crux");
+    }
+
+    #[test]
+    fn test_find_socket_respects_crux_socket_env() {
+        // Test that CRUX_SOCKET environment variable is checked first.
+        // We can't easily create a valid socket file in a unit test, but we can
+        // verify the logic path by checking with a nonexistent path.
+        std::env::set_var("CRUX_SOCKET", "/tmp/nonexistent-crux-socket-12345");
+        let result = find_socket();
+        // Should fail because the path doesn't exist, but error message should
+        // indicate it tried the env var path (or discovered socket).
+        assert!(result.is_err());
+        std::env::remove_var("CRUX_SOCKET");
+    }
+
+    #[test]
+    fn test_find_socket_without_env_uses_discover() {
+        // Test that discover_socket is used when CRUX_SOCKET is not set.
+        std::env::remove_var("CRUX_SOCKET");
+        let result = find_socket();
+        // This will fail unless a Crux instance is actually running,
+        // but the test verifies the code path doesn't panic.
+        if result.is_err() {
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("no running Crux instance found"),
+                "expected 'no running Crux instance' error, got: {}",
+                err_msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_jsonrpc_request_serialization() {
+        // Test that we can create and serialize a valid JSON-RPC request.
+        use crux_protocol::JsonRpcRequest;
+        let request = JsonRpcRequest::new(1, "test_method", Some(serde_json::json!({"key": "value"})));
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"jsonrpc\":\"2.0\""));
+        assert!(json.contains("\"method\":\"test_method\""));
+        assert!(json.contains("\"id\":1"));
+    }
+}

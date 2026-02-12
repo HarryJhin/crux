@@ -100,3 +100,112 @@ pub fn read_resource_data(
         other => Err(format!("unknown resource type: {other}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resource_templates_count() {
+        let templates = resource_templates();
+        assert_eq!(templates.len(), 2, "should have 2 resource templates");
+    }
+
+    #[test]
+    fn test_resource_templates_scrollback() {
+        let templates = resource_templates();
+        let scrollback = templates.iter().find(|t| {
+            t.raw.uri_template == "crux://pane/{pane_id}/scrollback"
+        });
+        assert!(scrollback.is_some(), "scrollback template should exist");
+        let template = &scrollback.unwrap().raw;
+        assert_eq!(template.name, "Pane Scrollback");
+        assert_eq!(template.mime_type, Some("text/plain".into()));
+    }
+
+    #[test]
+    fn test_resource_templates_state() {
+        let templates = resource_templates();
+        let state = templates.iter().find(|t| {
+            t.raw.uri_template == "crux://pane/{pane_id}/state"
+        });
+        assert!(state.is_some(), "state template should exist");
+        let template = &state.unwrap().raw;
+        assert_eq!(template.name, "Pane State");
+        assert_eq!(template.mime_type, Some("application/json".into()));
+    }
+
+    #[test]
+    fn test_parse_resource_uri_scrollback() {
+        let result = parse_resource_uri("crux://pane/42/scrollback");
+        assert_eq!(result, Some((42, "scrollback")));
+    }
+
+    #[test]
+    fn test_parse_resource_uri_state() {
+        let result = parse_resource_uri("crux://pane/123/state");
+        assert_eq!(result, Some((123, "state")));
+    }
+
+    #[test]
+    fn test_parse_resource_uri_zero_id() {
+        let result = parse_resource_uri("crux://pane/0/scrollback");
+        assert_eq!(result, Some((0, "scrollback")));
+    }
+
+    #[test]
+    fn test_parse_resource_uri_large_id() {
+        let result = parse_resource_uri("crux://pane/99999999/state");
+        assert_eq!(result, Some((99999999, "state")));
+    }
+
+    #[test]
+    fn test_parse_resource_uri_invalid_scheme() {
+        let result = parse_resource_uri("http://pane/42/scrollback");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_resource_uri_missing_prefix() {
+        let result = parse_resource_uri("pane/42/scrollback");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_resource_uri_invalid_id() {
+        let result = parse_resource_uri("crux://pane/notanumber/scrollback");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_resource_uri_missing_resource_type() {
+        let result = parse_resource_uri("crux://pane/42");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_resource_uri_missing_id() {
+        let result = parse_resource_uri("crux://pane//scrollback");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_resource_uri_empty_string() {
+        let result = parse_resource_uri("");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_resource_uri_trailing_slash() {
+        let result = parse_resource_uri("crux://pane/42/scrollback/");
+        // This should parse the resource_type as "scrollback/"
+        assert_eq!(result, Some((42, "scrollback/")));
+    }
+
+    #[test]
+    fn test_parse_resource_uri_extra_segments() {
+        let result = parse_resource_uri("crux://pane/42/scrollback/extra");
+        // The parser splits on first '/', so resource_type will be "scrollback/extra"
+        assert_eq!(result, Some((42, "scrollback/extra")));
+    }
+}
