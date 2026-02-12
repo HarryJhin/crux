@@ -199,8 +199,8 @@ libc = "0.2"
   - DockArea with TabPanel, CruxTerminalPanel implementing Panel trait
 - [x] Tab creation (Cmd+T), closing (Cmd+W), switching (Cmd+1-9)
   - NewTab adds to focused TabPanel, CloseTab removes active panel, SelectTab1-9 by index
-- [ ] Tab reordering via drag
-  - DockArea provides built-in drag-and-drop (needs verification)
+- [x] Tab reordering via drag
+  - DockArea provides built-in drag-and-drop (gpui-component built-in)
 - [x] Tab title from active pane's shell title
   - Priority: OSC title > CWD basename (via OSC 7) > "Terminal" fallback
 - [x] Tab close confirmation when process is running
@@ -221,7 +221,8 @@ libc = "0.2"
   - ToggleZoom action on focused TabPanel
 - [x] Pane close with graceful process termination
   - IPC close-pane with force:false checks process status; Drop impl does SIGHUP→wait→SIGKILL
-- [ ] Top-level window split vs individual pane split
+- [x] Top-level window split vs individual pane split
+  - WindowSplitRight/Down actions use DockArea::add_panel at root level (Cmd+Ctrl+D / Cmd+Ctrl+Shift+D)
 
 ### 2.3 Pane Manager
 
@@ -301,8 +302,10 @@ Native MCP (Model Context Protocol) server embedded in Crux, enabling all MCP-co
 - [x] IPC client: thread-safe `UnixStream` with `Mutex`, length-prefixed JSON-RPC 2.0
 - [x] Socket discovery: `$CRUX_SOCKET` env → `crux_ipc::discover_socket()`
 - [ ] MCP server lifecycle: start on app launch, stop on app exit (deferred — manual launch for now)
-- [ ] HTTP localhost fallback transport (`127.0.0.1:{port}`)
-- [ ] MCP capability negotiation: `tools` + `resources` (tools enabled, resources pending)
+- [x] HTTP localhost fallback transport (`127.0.0.1:{port}`)
+  - `--http --port 3100` flag, rmcp StreamableHttpService + axum
+- [x] MCP capability negotiation: `tools` + `resources`
+  - ServerCapabilities::builder().enable_tools().enable_resources()
 - [x] Pane management tools (5):
   - [x] `crux_create_pane` — split pane (horizontal/vertical), return PaneInfo
   - [x] `crux_close_pane` — close by pane_id
@@ -327,7 +330,9 @@ Native MCP (Model Context Protocol) server embedded in Crux, enabling all MCP-co
   - [x] `crux_get_formatted_output` — ANSI codes preserved
   - [x] `crux_get_scrollback_text` — scrollback text with line range
   - [x] `crux_save_restore_session` — stub (requires session serialization)
-- [ ] MCP resources: expose pane scrollback as `crux://pane/{id}/scrollback`
+- [x] MCP resources: expose pane scrollback as `crux://pane/{id}/scrollback`
+  - Resource templates: scrollback (text/plain) + state (application/json)
+  - list_resource_templates + read_resource handlers in ServerHandler impl
 
 ### 2.10 MCP Bridge Binary (crux-mcp-bridge) — COLLAPSED into 2.9
 
@@ -335,7 +340,8 @@ Native MCP (Model Context Protocol) server embedded in Crux, enabling all MCP-co
 
 - [x] Standalone stdio binary connecting to Crux IPC socket
 - [x] Socket discovery: `$CRUX_SOCKET` → `crux_ipc::discover_socket()`
-- [ ] Connection retry with backoff (Crux may not be running yet)
+- [x] Connection retry with backoff (Crux may not be running yet)
+  - connect_with_retry(10) with exponential backoff 100ms → 5s max
 - [x] Claude Desktop config example:
   ```json
   {
