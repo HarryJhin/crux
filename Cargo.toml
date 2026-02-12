@@ -32,7 +32,6 @@ alacritty_terminal = "0.25"
 portable-pty = "0.9"
 
 # Utilities
-unicode-width = "0.2"
 smallvec = { version = "1.15", features = ["const_new"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

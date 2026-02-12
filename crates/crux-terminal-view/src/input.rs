@@ -9,14 +9,39 @@ use std::io::Write;
 use crux_terminal::TermMode;
 use gpui::Keystroke;
 
+/// Whether the macOS Option key should be treated as Alt.
+/// When true, Option+key sends ESC prefix (terminal Alt behavior).
+/// When false, Option+key sends the macOS special character (e.g., å, ∫, ç).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum OptionAsAlt {
+    /// Neither Option key acts as Alt (macOS default behavior).
+    None,
+    /// Left Option acts as Alt, right Option for composition — needs platform API.
+    Left,
+    /// Right Option acts as Alt, left Option for composition — needs platform API.
+    Right,
+    /// Both Option keys act as Alt (typical terminal behavior).
+    Both,
+}
+
 /// Convert a GPUI Keystroke into a byte sequence for the PTY.
 ///
 /// `mode` contains the current terminal mode flags, used to determine
 /// whether cursor keys should use application mode (SS3) encoding.
-pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
+pub fn keystroke_to_bytes(
+    keystroke: &Keystroke,
+    mode: TermMode,
+    option_as_alt: OptionAsAlt,
+) -> Option<Vec<u8>> {
     let mods = modifier_param(keystroke);
     let has_shift = keystroke.modifiers.shift;
-    let has_alt = keystroke.modifiers.alt;
+    let has_alt = keystroke.modifiers.alt
+        && match option_as_alt {
+            OptionAsAlt::None => false,
+            // Left/Right behave as Both until GPUI exposes left/right Alt distinction.
+            OptionAsAlt::Left | OptionAsAlt::Right | OptionAsAlt::Both => true,
+        };
     let has_ctrl = keystroke.modifiers.control;
     let app_cursor = mode.contains(TermMode::APP_CURSOR);
 
@@ -96,16 +121,20 @@ pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u
                 }
             }
 
+            // Alt with option_as_alt: send ESC + base key character.
+            if has_alt {
+                let base = key.as_bytes();
+                if !base.is_empty() {
+                    let mut bytes = vec![0x1b];
+                    bytes.extend_from_slice(base);
+                    return Some(bytes);
+                }
+            }
+
             // Fall through to key_char for printable text.
             if let Some(text) = &keystroke.key_char {
                 if !text.is_empty() {
-                    return if has_alt {
-                        let mut bytes = vec![0x1b];
-                        bytes.extend_from_slice(text.as_bytes());
-                        Some(bytes)
-                    } else {
-                        Some(text.as_bytes().to_vec())
-                    };
+                    return Some(text.as_bytes().to_vec());
                 }
             }
 
@@ -200,7 +229,7 @@ mod tests {
     fn test_enter() {
         let ks = make_keystroke("enter", None, Modifiers::default());
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::empty()),
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
             Some(b"\r".to_vec())
         );
     }
@@ -209,7 +238,7 @@ mod tests {
     fn test_printable_char() {
         let ks = make_keystroke("a", Some("a"), Modifiers::default());
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::empty()),
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
             Some(b"a".to_vec())
         );
     }
@@ -224,14 +253,17 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(keystroke_to_bytes(&ks, TermMode::empty()), Some(vec![3]));
+        assert_eq!(
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
+            Some(vec![3])
+        );
     }
 
     #[test]
     fn test_arrow_normal() {
         let ks = make_keystroke("up", None, Modifiers::default());
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::empty()),
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
             Some(b"\x1b[A".to_vec())
         );
     }
@@ -240,7 +272,7 @@ mod tests {
     fn test_arrow_application() {
         let ks = make_keystroke("up", None, Modifiers::default());
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::APP_CURSOR),
+            keystroke_to_bytes(&ks, TermMode::APP_CURSOR, OptionAsAlt::Both),
             Some(b"\x1bOA".to_vec())
         );
     }
@@ -256,7 +288,7 @@ mod tests {
             },
         );
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::empty()),
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
             Some(b"\x1b[1;5A".to_vec())
         );
     }
@@ -265,7 +297,7 @@ mod tests {
     fn test_f1_no_mod() {
         let ks = make_keystroke("f1", None, Modifiers::default());
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::empty()),
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
             Some(b"\x1bOP".to_vec())
         );
     }
@@ -274,7 +306,7 @@ mod tests {
     fn test_f5_no_mod() {
         let ks = make_keystroke("f5", None, Modifiers::default());
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::empty()),
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
             Some(b"\x1b[15~".to_vec())
         );
     }
@@ -290,7 +322,7 @@ mod tests {
             },
         );
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::empty()),
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
             Some(b"\x1b[Z".to_vec())
         );
     }
@@ -306,7 +338,74 @@ mod tests {
             },
         );
         assert_eq!(
-            keystroke_to_bytes(&ks, TermMode::empty()),
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
+            Some(b"\x1ba".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_option_as_alt_none_sends_keychar() {
+        // When option_as_alt is None, Alt+a should send the key_char as-is (not ESC prefix)
+        let ks = make_keystroke(
+            "a",
+            Some("å"),
+            Modifiers {
+                alt: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::None),
+            Some("å".as_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn test_option_as_alt_both_sends_esc_prefix() {
+        let ks = make_keystroke(
+            "a",
+            Some("å"),
+            Modifiers {
+                alt: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Both),
+            Some(b"\x1ba".to_vec()) // ESC + base key, not ESC + key_char
+        );
+    }
+
+    #[test]
+    fn test_option_as_alt_left_acts_as_both() {
+        // Left variant behaves same as Both until platform API available.
+        let ks = make_keystroke(
+            "a",
+            Some("å"),
+            Modifiers {
+                alt: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Left),
+            Some(b"\x1ba".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_option_as_alt_right_acts_as_both() {
+        // Right variant behaves same as Both until platform API available.
+        let ks = make_keystroke(
+            "a",
+            Some("å"),
+            Modifiers {
+                alt: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            keystroke_to_bytes(&ks, TermMode::empty(), OptionAsAlt::Right),
             Some(b"\x1ba".to_vec())
         );
     }

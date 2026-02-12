@@ -5,12 +5,14 @@ use std::time::{Duration, Instant};
 use gpui::*;
 
 use crux_terminal::{
-    Column, CruxTerminal, DamageState, Line, Point, Scroll, Selection, SelectionType, Side,
-    TermMode, TerminalEvent, TerminalSize,
+    Column, CruxTerminal, DamageState, Dimensions, Line, Point, Scroll, Selection, SelectionType,
+    Side, TermMode, TerminalEvent, TerminalSize,
 };
 
 use crate::element::render_terminal_canvas;
 use crate::input;
+use crate::input::OptionAsAlt;
+use crate::mouse;
 
 const FONT_FAMILY: &str = "Menlo";
 const FONT_SIZE: f32 = 14.0;
@@ -45,6 +47,12 @@ pub struct CruxTerminalView {
     cursor_blink_epoch: Instant,
     /// Interval for cursor blink on/off cycles.
     cursor_blink_interval: Duration,
+    /// Whether the terminal view is currently focused.
+    is_focused: bool,
+    /// Whether the macOS Option key should be treated as Alt.
+    option_as_alt: OptionAsAlt,
+    /// Last reported mouse grid position, for motion event deduplication.
+    last_mouse_grid: Option<Point>,
 }
 
 /// Alias for GPUI's 2D point to avoid confusion with alacritty's grid Point.
@@ -102,6 +110,9 @@ impl CruxTerminalView {
             cursor_blink_visible: true,
             cursor_blink_epoch: Instant::now(),
             cursor_blink_interval: Duration::from_millis(500),
+            is_focused: false,
+            option_as_alt: OptionAsAlt::Both,
+            last_mouse_grid: None,
         }
     }
 
@@ -170,10 +181,17 @@ impl CruxTerminalView {
             return;
         }
 
+        // Handle Cmd+A for select all.
+        if event.keystroke.modifiers.platform && event.keystroke.key.as_str() == "a" {
+            self.select_all();
+            cx.notify();
+            return;
+        }
+
         // Get the current terminal mode for application cursor key detection.
         let mode = self.terminal.content().mode;
 
-        if let Some(bytes) = input::keystroke_to_bytes(&event.keystroke, mode) {
+        if let Some(bytes) = input::keystroke_to_bytes(&event.keystroke, mode, self.option_as_alt) {
             // Clear selection when typing.
             self.terminal.with_term_mut(|term| {
                 term.selection = None;
@@ -214,15 +232,25 @@ impl CruxTerminalView {
         cx: &mut Context<Self>,
     ) {
         self.focus_handle.focus(window);
-
-        // Reset cursor blink on mouse click.
         self.reset_cursor_blink();
 
         let grid_point = self.pixel_to_grid(event.position);
+        let mode = self.terminal.content().mode;
+
+        // If mouse mode is active and Shift is not held, report to PTY.
+        if mouse::mouse_mode_active(mode, event.modifiers.shift) {
+            let cb = mouse::mouse_button_to_cb(event.button, false)
+                + mouse::modifier_bits(&event.modifiers);
+            let report = mouse::sgr_mouse_report(cb, grid_point, true);
+            self.terminal.write_to_pty(&report);
+            self.last_mouse_grid = Some(grid_point);
+            cx.notify();
+            return;
+        }
+
+        // Normal selection handling.
         let side = self.pixel_to_side(event.position);
         let display_offset = self.terminal.content().display_offset;
-
-        // Convert viewport point to absolute terminal point for selection.
         let abs_point = Point::new(
             Line(grid_point.line.0 - display_offset as i32),
             grid_point.column,
@@ -247,14 +275,47 @@ impl CruxTerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let grid_point = self.pixel_to_grid(event.position);
+        let mode = self.terminal.content().mode;
+
+        // Mouse mode reporting for motion events.
+        if mouse::mouse_mode_active(mode, false) {
+            let has_button = event.pressed_button.is_some();
+
+            // Mode 1002 (MOUSE_DRAG): report motion only when button pressed + cell changed.
+            // Mode 1003 (MOUSE_MOTION): report all motion when cell changed.
+            let should_report = if mode.contains(TermMode::MOUSE_MOTION) {
+                // Any-event tracking: report all motion when cell changes.
+                true
+            } else if mode.contains(TermMode::MOUSE_DRAG) && has_button {
+                // Button-event tracking: report only when button is held.
+                true
+            } else {
+                false
+            };
+
+            if should_report {
+                // Deduplicate: only report when the cell actually changed.
+                if self.last_mouse_grid != Some(grid_point) {
+                    let button = event.pressed_button.unwrap_or(MouseButton::Left);
+                    let cb = mouse::mouse_button_to_cb(button, true)
+                        + mouse::modifier_bits(&event.modifiers);
+                    let report = mouse::sgr_mouse_report(cb, grid_point, true);
+                    self.terminal.write_to_pty(&report);
+                    self.last_mouse_grid = Some(grid_point);
+                    cx.notify();
+                }
+            }
+            return;
+        }
+
+        // Normal selection dragging.
         if event.pressed_button != Some(MouseButton::Left) {
             return;
         }
 
-        let grid_point = self.pixel_to_grid(event.position);
         let side = self.pixel_to_side(event.position);
         let display_offset = self.terminal.content().display_offset;
-
         let abs_point = Point::new(
             Line(grid_point.line.0 - display_offset as i32),
             grid_point.column,
@@ -271,11 +332,23 @@ impl CruxTerminalView {
 
     fn handle_mouse_up(
         &mut self,
-        _event: &MouseUpEvent,
+        event: &MouseUpEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        // Selection is finalized — keep it in place until next click or typing clears it.
+        let mode = self.terminal.content().mode;
+
+        // If mouse mode is active, report the release to PTY.
+        if mouse::mouse_mode_active(mode, event.modifiers.shift) {
+            let grid_point = self.pixel_to_grid(event.position);
+            let cb = mouse::mouse_button_to_cb(event.button, false)
+                + mouse::modifier_bits(&event.modifiers);
+            let report = mouse::sgr_mouse_report(cb, grid_point, false);
+            self.terminal.write_to_pty(&report);
+            self.last_mouse_grid = None;
+            cx.notify();
+        }
+        // Normal mode: selection is finalized, no action needed.
     }
 
     fn handle_scroll_wheel(
@@ -284,11 +357,54 @@ impl CruxTerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let delta = match event.delta {
-            ScrollDelta::Lines(lines) => {
-                // Negative y = scroll up (show history), positive = scroll down.
-                -(lines.y * SCROLL_LINES_PER_TICK as f32) as i32
+        let mode = self.terminal.content().mode;
+
+        // If mouse mode is active and Shift is not held, report scroll to PTY.
+        if mouse::mouse_mode_active(mode, event.modifiers.shift) {
+            let grid_point = self.pixel_to_grid(event.position);
+            let lines = match event.delta {
+                ScrollDelta::Lines(l) => l.y.abs().max(1.0) as usize,
+                ScrollDelta::Pixels(p) => {
+                    (f32::from(p.y).abs() / f32::from(self.cell_height)).max(1.0) as usize
+                }
+            };
+            let up = match event.delta {
+                ScrollDelta::Lines(l) => l.y < 0.0,
+                ScrollDelta::Pixels(p) => f32::from(p.y) < 0.0,
+            };
+            let cb = mouse::scroll_button(up) + mouse::modifier_bits(&event.modifiers);
+            // Send one report per scroll line (standard behavior).
+            for _ in 0..lines {
+                let report = mouse::sgr_mouse_report(cb, grid_point, true);
+                self.terminal.write_to_pty(&report);
             }
+            cx.notify();
+            return;
+        }
+
+        // Alternate screen + ALTERNATE_SCROLL: convert scroll to cursor keys.
+        if mode.contains(TermMode::ALT_SCREEN) && mode.contains(TermMode::ALTERNATE_SCROLL) {
+            let lines = match event.delta {
+                ScrollDelta::Lines(l) => l.y.abs().max(1.0) as usize,
+                ScrollDelta::Pixels(p) => {
+                    (f32::from(p.y).abs() / f32::from(self.cell_height)).max(1.0) as usize
+                }
+            };
+            let up = match event.delta {
+                ScrollDelta::Lines(l) => l.y < 0.0,
+                ScrollDelta::Pixels(p) => f32::from(p.y) < 0.0,
+            };
+            let key = if up { b"\x1bOA" } else { b"\x1bOB" };
+            for _ in 0..lines {
+                self.terminal.write_to_pty(key);
+            }
+            cx.notify();
+            return;
+        }
+
+        // Normal scrollback.
+        let delta = match event.delta {
+            ScrollDelta::Lines(lines) => -(lines.y * SCROLL_LINES_PER_TICK as f32) as i32,
             ScrollDelta::Pixels(pixels) => {
                 let lines = f32::from(pixels.y) / f32::from(self.cell_height);
                 -lines as i32
@@ -341,7 +457,10 @@ impl CruxTerminalView {
                     self.title = Some(title);
                 }
                 TerminalEvent::Bell => {
-                    self.bell_at = Some(Instant::now());
+                    // Rate limit: ignore bells while a flash is already active.
+                    if !self.is_bell_active() {
+                        self.bell_at = Some(Instant::now());
+                    }
                 }
                 TerminalEvent::ProcessExit(code) => {
                     log::info!("child process exited with code {}", code);
@@ -368,10 +487,28 @@ impl CruxTerminalView {
         self.cursor_blink_epoch = Instant::now();
     }
 
+    /// Select all terminal content (screen + scrollback).
+    fn select_all(&mut self) {
+        self.terminal.with_term_mut(|term| {
+            let start = Point::new(term.grid().topmost_line(), Column(0));
+            let end = Point::new(
+                term.grid().bottommost_line(),
+                Column(term.grid().columns() - 1),
+            );
+            let mut sel = Selection::new(SelectionType::Lines, start, Side::Left);
+            sel.update(end, Side::Right);
+            term.selection = Some(sel);
+        });
+    }
+
     /// Returns true if we should notify GPUI for cursor blink animation.
     fn should_notify_for_blink(&self) -> bool {
-        // Always notify during blink to keep the animation running.
-        true
+        // Only animate cursor blink when focused (unfocused cursor shows as hollow, no animation)
+        if !self.is_focused {
+            return false;
+        }
+        // Only notify when blink state would actually change
+        self.calculate_cursor_visible() != self.cursor_blink_visible
     }
 
     /// Calculate whether the cursor should be visible based on blink cycle.
@@ -399,8 +536,10 @@ impl Render for CruxTerminalView {
         // Get the terminal content snapshot.
         let content = self.terminal.content();
         let focused = self.focus_handle.is_focused(window);
+        self.is_focused = focused;
         let bell_active = self.is_bell_active();
         let cursor_visible = self.calculate_cursor_visible();
+        self.cursor_blink_visible = cursor_visible;
 
         // Update dirty flag based on damage state.
         match &content.damage {
@@ -423,8 +562,12 @@ impl Render for CruxTerminalView {
             .size_full()
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+            .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::handle_mouse_down))
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up(MouseButton::Right, cx.listener(Self::handle_mouse_up))
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
             .child(
                 // Invisible canvas to detect size changes and capture origin.

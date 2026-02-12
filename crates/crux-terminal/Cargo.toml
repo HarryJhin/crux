@@ -12,7 +12,6 @@ doctest = false
 gpui.workspace = true
 alacritty_terminal.workspace = true
 portable-pty.workspace = true
-unicode-width.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
 anyhow.workspace = true

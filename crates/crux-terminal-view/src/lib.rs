@@ -3,6 +3,7 @@
 mod colors;
 mod element;
 mod input;
+mod mouse;
 mod view;
 
 pub use view::CruxTerminalView;

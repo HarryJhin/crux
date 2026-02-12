@@ -1268,19 +1268,18 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "serde",
- "unicode-width",
 ]
 
 [[package]]
 name = "crux-terminal-view"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "anyhow",
  "crux-terminal",
  "gpui",
  "log",
  "smallvec",
- "unicode-width",
 ]
 
 [[package]]
