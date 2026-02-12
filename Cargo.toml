@@ -1,0 +1,56 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/crux-app",
+    "crates/crux-terminal",
+    "crates/crux-terminal-view",
+    "crates/crux-ipc",
+    "crates/crux-clipboard",
+    "crates/crux-protocol",
+]
+default-members = ["crates/crux-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+crux-terminal = { path = "crates/crux-terminal" }
+crux-terminal-view = { path = "crates/crux-terminal-view" }
+crux-ipc = { path = "crates/crux-ipc" }
+crux-clipboard = { path = "crates/crux-clipboard" }
+crux-protocol = { path = "crates/crux-protocol" }
+
+# GPUI
+gpui = "0.2.2"
+
+# Terminal core
+alacritty_terminal = "0.25"
+portable-pty = "0.9"
+
+# Utilities
+unicode-width = "0.2"
+smallvec = { version = "1.15", features = ["const_new"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+parking_lot = "0.12"
+
+# Pin to avoid core-graphics version conflict with gpui's zed-font-kit
+core-text = "=21.0.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

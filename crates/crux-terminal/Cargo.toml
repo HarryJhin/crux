@@ -1,0 +1,19 @@
+[package]
+name = "crux-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+alacritty_terminal.workspace = true
+portable-pty.workspace = true
+unicode-width.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+log.workspace = true

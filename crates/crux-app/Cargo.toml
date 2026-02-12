@@ -1,0 +1,17 @@
+[package]
+name = "crux-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "crux-app"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+crux-terminal-view.workspace = true
+anyhow.workspace = true
+log.workspace = true
+core-text.workspace = true

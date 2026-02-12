@@ -1,0 +1,17 @@
+[package]
+name = "crux-terminal-view"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+crux-terminal.workspace = true
+unicode-width.workspace = true
+smallvec.workspace = true
+anyhow.workspace = true
+log.workspace = true
