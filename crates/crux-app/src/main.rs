@@ -3,6 +3,8 @@ use gpui::*;
 use crux_terminal_view::CruxTerminalView;
 
 fn main() {
+    env_logger::init();
+
     Application::new().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {

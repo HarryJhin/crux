@@ -444,7 +444,7 @@ impl CruxTerminalView {
     }
 
     /// Process pending terminal events.
-    fn process_events(&mut self, window: &mut Window) {
+    fn process_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut had_events = false;
         for event in self.terminal.drain_events() {
             had_events = true;
@@ -464,7 +464,7 @@ impl CruxTerminalView {
                 }
                 TerminalEvent::ProcessExit(code) => {
                     log::info!("child process exited with code {}", code);
-                    // TODO: close window or show exit indicator in Phase 2
+                    cx.quit();
                 }
                 TerminalEvent::Wakeup => {}
             }
@@ -531,7 +531,7 @@ impl Render for CruxTerminalView {
         self.measure_cell(window);
 
         // Process pending terminal events.
-        self.process_events(window);
+        self.process_events(window, cx);
 
         // Get the terminal content snapshot.
         let content = self.terminal.content();

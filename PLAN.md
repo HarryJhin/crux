@@ -22,40 +22,40 @@
 
 ### 1.1 Project Scaffolding
 
-- [ ] Initialize Cargo workspace with `crates/` structure
+- [x] Initialize Cargo workspace with `crates/` structure
   - Workspace root: `resolver = "2"`, `members` array for all crates
   - Crate dependency graph: `crux-protocol` (leaf) -> `crux-terminal` -> `crux-terminal-view` -> `crux-app` (root)
   - `crux-ipc`, `crux-clipboard` as initially empty crates for Phase 2/3
-- [ ] Set up `crux-app` crate with GPUI application bootstrap
+- [x] Set up `crux-app` crate with GPUI application bootstrap
   - `Application::new().run()` -> `cx.open_window()` -> Root view
   - Window default size: 800x600
   - `FocusHandle` for keyboard event capture
-- [ ] Set up `crux-terminal` crate for terminal entity
-- [ ] Set up `crux-terminal-view` crate for rendering
-- [ ] Set up `crux-protocol` crate for shared types
-- [ ] Configure dependencies from crates.io (not git):
+- [x] Set up `crux-terminal` crate for terminal entity
+- [x] Set up `crux-terminal-view` crate for rendering
+- [x] Set up `crux-protocol` crate for shared types
+- [x] Configure dependencies from crates.io (not git):
   - `gpui = "0.2.2"` (crates.io -- faster builds, better caching than git dep)
   - `gpui-component = "0.5.1"` (Phase 2, but configure early)
   - `alacritty_terminal = "0.25"`
   - `portable-pty = "0.9"`
-- [ ] **build.rs is NOT needed** -- GPUI handles Metal shader compilation and framework linking internally
-- [ ] **Xcode.app full install required** (Command Line Tools alone insufficient for Metal shaders)
+- [x] **build.rs is NOT needed** -- GPUI handles Metal shader compilation and framework linking internally
+- [x] **Xcode.app full install required** (Command Line Tools alone insufficient for Metal shaders)
   - Verify: `xcrun -sdk macosx metal --version`
   - Switch if needed: `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`
-- [ ] Dev profile optimization: `opt-level = 1` for GPUI rendering performance
+- [x] Dev profile optimization: `opt-level = 1` for GPUI rendering performance
   - `[profile.dev.package."*"] opt-level = 2` for dependency optimization
-- [ ] Release profile: `lto = "thin"`, `codegen-units = 1`, `strip = "symbols"`
-- [ ] Create `resources/Info.plist` with `LSMinimumSystemVersion = 13.0`, `CFBundleIdentifier = com.crux.terminal`
+- [x] Release profile: `lto = "thin"`, `codegen-units = 1`, `strip = "symbols"`
+- [x] Create `resources/Info.plist` with `LSMinimumSystemVersion = 13.0`, `CFBundleIdentifier = com.crux.terminal`
 
 ### 1.2 Terminfo Entry (`crux.terminfo`)
 
-- [ ] Create `extra/crux.terminfo` source file
-- [ ] Use **fragment pattern**: `crux+common` (shared capabilities), `xterm-crux` (256-color), `crux` (alias), `crux-direct` (true color)
-- [ ] TERM name strategy: **`xterm-crux`** (following Ghostty/Kitty/Rio pattern)
+- [x] Create `extra/crux.terminfo` source file
+- [x] Use **fragment pattern**: `crux+common` (shared capabilities), `xterm-crux` (256-color), `crux` (alias), `crux-direct` (true color)
+- [x] TERM name strategy: **`xterm-crux`** (following Ghostty/Kitty/Rio pattern)
   - `xterm-` prefix ensures compatibility (many apps check for "xterm" substring)
   - Ghostty tried `ghostty` without prefix, hit compatibility issues, switched to `xterm-ghostty`
-- [ ] Independent definition (not `use=xterm-256color`) -- self-contained like Alacritty
-- [ ] Include modern capabilities:
+- [x] Independent definition (not `use=xterm-256color`) -- self-contained like Alacritty
+- [x] Include modern capabilities:
   - `Tc` (true color, tmux), `RGB` (true color, ncurses)
   - `Su` (styled underlines), `Smulx` (underline style: `\E[4\:%p1%dm`)
   - `Setulc` (underline color: RGB via `CSI 58:2::R:G:B m`)
@@ -65,102 +65,102 @@
   - `hs`/`tsl`/`fsl`/`dsl` (status line for nvim)
   - SGR mouse (`kmous=\E[<`), bracketed paste (`BD`/`BE`/`PS`/`PE`), focus events (`Dsfcs`/`Enfcs`)
   - F1-F63 key definitions (F1-F12 + Shift/Ctrl/Meta variants)
-- [ ] Compile with `tic -x` (the `-x` flag is critical for non-standard extensions like `Tc`, `Su`)
+- [x] Compile with `tic -x` (the `-x` flag is critical for non-standard extensions like `Tc`, `Su`)
   - Install: `tic -x -e xterm-crux,crux,crux-direct extra/crux.terminfo`
   - Verify: `infocmp -x xterm-crux`
 - [ ] Bundle in app: `Crux.app/Contents/Resources/terminfo/x/xterm-crux`
   - Set `TERMINFO` or prepend to `TERMINFO_DIRS` at launch
-- [ ] Fallback logic: if `xterm-crux` terminfo not found, fall back to `TERM=xterm-256color`
+- [x] Fallback logic: if `xterm-crux` terminfo not found, fall back to `TERM=xterm-256color`
 
 ### 1.3 Terminal Entity (crux-terminal)
 
-- [ ] Integrate `alacritty_terminal = "0.25"` as VT parser
-- [ ] Create `CruxTerminal` entity wrapping `Term<CruxListener>`
-- [ ] Implement `CruxListener` for alacritty events (Title, Wakeup, Bell, PtyWrite)
-- [ ] Integrate `portable-pty = "0.9"` for PTY management
-- [ ] Shell spawning with correct environment variables:
+- [x] Integrate `alacritty_terminal = "0.25"` as VT parser
+- [x] Create `CruxTerminal` entity wrapping `Term<CruxListener>`
+- [x] Implement `CruxListener` for alacritty events (Title, Wakeup, Bell, PtyWrite)
+- [x] Integrate `portable-pty = "0.9"` for PTY management
+- [x] Shell spawning with correct environment variables:
   - `TERM=xterm-crux` (with fallback to `xterm-256color`)
   - `COLORTERM=truecolor`
   - `TERM_PROGRAM=Crux`, `TERM_PROGRAM_VERSION=x.y.z`
   - `LANG` inherited from system
-- [ ] Shell selection logic: config file -> `$SHELL` -> `/etc/passwd` -> `/bin/zsh`
+- [x] Shell selection logic: config file -> `$SHELL` -> `/etc/passwd` -> `/bin/zsh`
   - Login shell (`-l` flag) by default
   - macOS: `dscl . -read /Users/$USER UserShell` as fallback
-- [ ] PTY I/O event loop (read PTY -> feed parser -> update grid -> notify render)
-- [ ] Event batching: max 100 events or 4ms window (Zed pattern)
-- [ ] PTY resize on window/pane size change (`TIOCSWINSZ` -> `SIGWINCH`)
-- [ ] `TerminalContent` render snapshot: cells, cursor, mode, display_offset
-- [ ] Alternate screen buffer handling (DECSET 1049) -- `alacritty_terminal` handles this via `inactive_grid`
-- [ ] Process lifecycle management:
+- [x] PTY I/O event loop (read PTY -> feed parser -> update grid -> notify render)
+- [x] Event batching: max 100 events or 4ms window (Zed pattern)
+- [x] PTY resize on window/pane size change (`TIOCSWINSZ` -> `SIGWINCH`)
+- [x] `TerminalContent` render snapshot: cells, cursor, mode, display_offset
+- [x] Alternate screen buffer handling (DECSET 1049) -- `alacritty_terminal` handles this via `inactive_grid`
+- [x] Process lifecycle management:
   - SIGHUP -> SIGTERM -> SIGKILL sequence on close
   - `waitpid` to prevent zombie processes
   - Graceful cleanup on app exit
 
 ### 1.4 Terminal Rendering (crux-terminal-view)
 
-- [ ] Implement `CruxTerminalElement` as GPUI Element
-- [ ] Cell grid rendering with monospace font
-- [ ] Text run batching (`BatchedTextRun`) -- group cells with same style
-- [ ] Background color rectangles with horizontal merging
-- [ ] Cursor rendering (block, bar, underline shapes)
+- [x] Implement `CruxTerminalElement` as GPUI Element
+- [x] Cell grid rendering with monospace font
+- [x] Text run batching (`BatchedTextRun`) -- group cells with same style
+- [x] Background color rectangles with horizontal merging
+- [x] Cursor rendering (block, bar, underline shapes)
   - Cursor blinking timer (GPUI periodic repaint)
   - DECSCUSR (`\e[N q`) cursor shape changes
   - Hollow cursor when unfocused
-- [ ] Basic color support: 16 ANSI colors + default fg/bg
-- [ ] Font metrics: cell width/height calculation from primary font
-- [ ] CJK wide character rendering (2-cell width via `unicode-width`)
+- [x] Basic color support: 16 ANSI colors + default fg/bg
+- [x] Font metrics: cell width/height calculation from primary font
+- [x] CJK wide character rendering (2-cell width via `unicode-width`)
 
 ### 1.5 Keyboard Input
 
-- [ ] GPUI key event handling (`on_key_down`, Action system, `FocusHandle`)
-- [ ] ASCII character input -> PTY write (UTF-8 bytes direct)
-- [ ] Control key combinations: Ctrl+A..Z -> 0x01..0x1A (C0 control codes)
+- [x] GPUI key event handling (`on_key_down`, Action system, `FocusHandle`)
+- [x] ASCII character input -> PTY write (UTF-8 bytes direct)
+- [x] Control key combinations: Ctrl+A..Z -> 0x01..0x1A (C0 control codes)
   - Ctrl+C (0x03 interrupt), Ctrl+D (0x04 EOF), Ctrl+Z (0x1A suspend)
   - Ctrl+[ = ESC (0x1B), Ctrl+\\ = SIGQUIT (0x1C)
-- [ ] Special keys:
+- [x] Special keys:
   - Enter: 0x0D, Tab: 0x09, Backspace: 0x7F (modern standard, not 0x08)
   - Shift+Tab: `CSI Z` (backtab)
   - Escape: 0x1B
-- [ ] Cursor keys -- two modes based on DECCKM:
+- [x] Cursor keys -- two modes based on DECCKM:
   - **Normal mode** (default): `CSI A/B/C/D` (Up/Down/Right/Left)
   - **Application mode** (DECCKM ON): `SS3 A/B/C/D`
   - With modifiers (always CSI): `CSI 1;{mod} A/B/C/D`
-- [ ] Function keys F1-F12:
+- [x] Function keys F1-F12:
   - F1-F4: `SS3 P/Q/R/S` (no modifier) or `CSI 1;{mod} P/Q/R/S`
   - F5-F12: `CSI {15,17,18,19,20,21,23,24} ~` (note: discontinuous numbers)
-- [ ] Editing/navigation keys:
+- [x] Editing/navigation keys:
   - Home/End: `CSI H` / `CSI F` (xterm style, recommended)
   - Insert/Delete/PgUp/PgDn: `CSI {2,3,5,6} ~`
-- [ ] Modifier encoding: `modifier_param = 1 + (Shift:1 | Alt:2 | Ctrl:4)` bits
+- [x] Modifier encoding: `modifier_param = 1 + (Shift:1 | Alt:2 | Ctrl:4)` bits
   - Param omitted when no modifiers (send `CSI A` not `CSI 1;1 A`)
-- [ ] Alt key handling: ESC prefix for characters (`Alt+a` -> `ESC a`)
-- [ ] macOS Option key: configurable `option_as_alt` setting
+- [x] Alt key handling: ESC prefix for characters (`Alt+a` -> `ESC a`)
+- [x] macOS Option key: configurable `option_as_alt` setting
   - Values: `left` (default), `right`, `both`, `none`
   - Left Option as Meta, Right Option for character composition
   - Detect left/right via `ModifiersKeyState`
 
 ### 1.6 Text Selection & Copy
 
-- [ ] Mouse click-drag text selection (GPUI mouse event handling)
-- [ ] Double-click: word selection
-- [ ] Triple-click: line selection
-- [ ] Cmd+A: select all
-- [ ] Selection highlight rendering (inverted colors or highlight overlay)
-- [ ] Cmd+C: copy selected text to system clipboard
+- [x] Mouse click-drag text selection (GPUI mouse event handling)
+- [x] Double-click: word selection
+- [x] Triple-click: line selection
+- [x] Cmd+A: select all
+- [x] Selection highlight rendering (inverted colors or highlight overlay)
+- [x] Cmd+C: copy selected text to system clipboard
   - Use `alacritty_terminal`'s `Selection` API and `selection_to_string()`
-- [ ] Shift+click to force selection when terminal mouse mode is active (1000/1002/1003)
+- [x] Shift+click to force selection when terminal mouse mode is active (1000/1002/1003)
 
 ### 1.7 Basic Features
 
-- [ ] 256 color + True color (24-bit RGB) SGR rendering
-- [ ] Bold, italic, underline, strikethrough text styles
-- [ ] Scrollback buffer (default 10,000 lines)
-- [ ] Mouse scroll for scrollback navigation
-- [ ] Window title from OSC 0/2 sequences
-- [ ] Bell notification (visual flash via `flash` capability or system sound)
+- [x] 256 color + True color (24-bit RGB) SGR rendering
+- [x] Bold, italic, underline, strikethrough text styles
+- [x] Scrollback buffer (default 10,000 lines)
+- [x] Mouse scroll for scrollback navigation
+- [x] Window title from OSC 0/2 sequences
+- [x] Bell notification (visual flash via `flash` capability or system sound)
   - Bell rate limiting (ignore rapid consecutive bells)
-- [ ] Synchronized output (Mode 2026): buffer rendering during `CSI ? 2026 h` .. `CSI ? 2026 l`
-- [ ] License decision: MIT recommended (compatible with GPUI Apache-2.0, alacritty_terminal Apache-2.0, portable-pty MIT)
+- [x] Synchronized output (Mode 2026): buffer rendering during `CSI ? 2026 h` .. `CSI ? 2026 l`
+- [x] License decision: MIT recommended (compatible with GPUI Apache-2.0, alacritty_terminal Apache-2.0, portable-pty MIT)
 
 ### Milestone 1 Deliverable
 
@@ -181,11 +181,10 @@ gpui = "0.2.2"
 # gpui-component = "0.5.1"  # Phase 2
 alacritty_terminal = "0.25"
 portable-pty = "0.9"
-unicode-width = "0.2"
-smallvec = { version = "1.15", features = ["const_new"] }
-serde = { version = "1", features = ["derive"] }
 anyhow = "1"
-parking_lot = "0.12"
+log = "0.4"
+env_logger = "0.11"
+libc = "0.2"
 ```
 
 ---

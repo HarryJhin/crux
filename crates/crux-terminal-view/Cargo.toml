@@ -11,8 +11,6 @@ doctest = false
 [dependencies]
 gpui.workspace = true
 crux-terminal.workspace = true
-smallvec.workspace = true
-anyhow.workspace = true
 log.workspace = true
 
 [dev-dependencies]

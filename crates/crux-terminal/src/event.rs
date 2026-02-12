@@ -43,7 +43,9 @@ impl EventListener for CruxEventListener {
         };
 
         if let Some(event) = mapped {
-            let _ = self.sender.send(event);
+            if let Err(e) = self.sender.send(event) {
+                log::debug!("failed to send terminal event: {}", e);
+            }
         }
     }
 }

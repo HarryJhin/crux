@@ -161,8 +161,13 @@ impl CruxTerminal {
 
     /// Write keyboard input or other data to the PTY.
     pub fn write_to_pty(&mut self, data: &[u8]) {
-        let _ = self.pty_writer.write_all(data);
-        let _ = self.pty_writer.flush();
+        if let Err(e) = self.pty_writer.write_all(data) {
+            log::warn!("failed to write to PTY: {}", e);
+            return;
+        }
+        if let Err(e) = self.pty_writer.flush() {
+            log::warn!("failed to flush PTY: {}", e);
+        }
     }
 
     /// Resize the terminal grid and PTY.
@@ -173,12 +178,14 @@ impl CruxTerminal {
         self.term.lock().resize(size);
 
         // Resize the PTY so the child process gets SIGWINCH.
-        let _ = self.master_pty.resize(portable_pty::PtySize {
+        if let Err(e) = self.master_pty.resize(portable_pty::PtySize {
             rows: size.rows as u16,
             cols: size.cols as u16,
             pixel_width: (size.cols as f32 * size.cell_width) as u16,
             pixel_height: (size.rows as f32 * size.cell_height) as u16,
-        });
+        }) {
+            log::warn!("failed to resize PTY: {}", e);
+        }
     }
 
     /// Access the terminal state under a lock.
@@ -328,7 +335,9 @@ impl Drop for CruxTerminal {
 
         // Join the reader thread.
         if let Some(thread) = self.reader_thread.take() {
-            let _ = thread.join();
+            if thread.join().is_err() {
+                log::debug!("reader thread panicked during join");
+            }
         }
     }
 }

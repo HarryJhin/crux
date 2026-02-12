@@ -12,6 +12,5 @@ path = "src/main.rs"
 [dependencies]
 gpui.workspace = true
 crux-terminal-view.workspace = true
-anyhow.workspace = true
-log.workspace = true
+env_logger = "0.11"
 core-text.workspace = true

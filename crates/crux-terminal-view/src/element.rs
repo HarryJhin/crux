@@ -325,7 +325,9 @@ pub fn render_terminal_canvas(
             // 4. Paint text lines.
             for (row, shaped_line) in state.shaped_lines.iter().enumerate() {
                 let line_origin = point(origin.x, origin.y + cell_height * row as f32);
-                let _ = shaped_line.paint(line_origin, cell_height, window, cx);
+                if let Err(e) = shaped_line.paint(line_origin, cell_height, window, cx) {
+                    log::warn!("failed to paint terminal line {}: {}", row, e);
+                }
             }
 
             // 5. Paint cursor.
