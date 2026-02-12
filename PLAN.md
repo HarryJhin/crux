@@ -198,21 +198,26 @@ libc = "0.2"
 - [x] Integrate gpui-component `Tabs` + `TabBar`
   - DockArea with TabPanel, CruxTerminalPanel implementing Panel trait
 - [x] Tab creation (Cmd+T), closing (Cmd+W), switching (Cmd+1-9)
-  - Keybindings registered, NewTab implemented via DockArea::add_panel, CloseTab/switching stubbed
+  - NewTab adds to focused TabPanel, CloseTab removes active panel, SelectTab1-9 by index
 - [ ] Tab reordering via drag
-- [ ] Tab title from active pane's shell title
+  - DockArea provides built-in drag-and-drop (needs verification)
+- [x] Tab title from active pane's shell title
+  - Priority: OSC title > CWD basename (via OSC 7) > "Terminal" fallback
 - [ ] Tab close confirmation when process is running
 
 ### 2.2 Split Panes
 
 - [x] Integrate gpui-component `DockArea` + `ResizablePanel`
   - DockArea initialized as center layout, DockItem::tab for terminal panels
-- [ ] Horizontal split (Cmd+D) and vertical split (Cmd+Shift+D)
-  - Keybindings registered, action handlers stubbed
-- [ ] Resizable dividers between panes
-- [ ] Pane focus navigation (Cmd+[/], Cmd+Alt+Arrow)
+- [x] Horizontal split (Cmd+D) and vertical split (Cmd+Shift+D)
+  - SplitRight via TabPanel::add_panel_at(Placement::Right)
+  - SplitDown via TabPanel::add_panel_at(Placement::Bottom)
+- [x] Resizable dividers between panes
+  - DockArea's StackPanel provides built-in resizable dividers
+- [x] Pane focus navigation (Cmd+[/], Cmd+Alt+Arrow)
+  - FocusNextPane/FocusPrevPane cycle through TabPanels in DockItem tree
 - [x] Pane zoom toggle (Cmd+Shift+Enter)
-  - Keybinding registered, action handler stubbed
+  - ToggleZoom action on focused TabPanel
 - [ ] Pane close with graceful process termination
 - [ ] Top-level window split vs individual pane split
 
