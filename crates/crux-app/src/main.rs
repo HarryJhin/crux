@@ -5,6 +5,9 @@ use crux_terminal_view::CruxTerminalView;
 fn main() {
     env_logger::init();
 
+    // Ensure xterm-crux terminfo is installed before starting the application
+    crux_terminal_view::ensure_terminfo_installed();
+
     Application::new().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {

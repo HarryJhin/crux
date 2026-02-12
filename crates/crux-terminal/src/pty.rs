@@ -28,10 +28,9 @@ fn check_terminfo_available(name: &str) -> bool {
 
     // $TERMINFO (single directory override)
     if let Ok(dir) = std::env::var("TERMINFO") {
-        if std::path::Path::new(&dir)
-            .join(&letter_dir)
-            .join(name)
-            .exists()
+        let base = std::path::Path::new(&dir);
+        if base.join(&letter_dir).join(name).exists()
+            || base.join(&hex_dir).join(name).exists()
         {
             return true;
         }
@@ -45,23 +44,20 @@ fn check_terminfo_available(name: &str) -> bool {
             } else {
                 dir
             };
-            if std::path::Path::new(dir)
-                .join(&letter_dir)
-                .join(name)
-                .exists()
+            let base = std::path::Path::new(dir);
+            if base.join(&letter_dir).join(name).exists()
+                || base.join(&hex_dir).join(name).exists()
             {
                 return true;
             }
         }
     }
 
-    // $HOME/.terminfo
+    // $HOME/.terminfo (check both letter and hex subdirectories)
     if let Ok(home) = std::env::var("HOME") {
-        if std::path::Path::new(&home)
-            .join(".terminfo")
-            .join(&letter_dir)
-            .join(name)
-            .exists()
+        let user_terminfo = std::path::Path::new(&home).join(".terminfo");
+        if user_terminfo.join(&letter_dir).join(name).exists()
+            || user_terminfo.join(&hex_dir).join(name).exists()
         {
             return true;
         }
@@ -183,6 +179,76 @@ pub fn start_pty_read_loop(
         .expect("failed to spawn PTY reader thread")
 }
 
+/// Ensure the xterm-crux terminfo is installed on the system.
+///
+/// This function:
+/// 1. Checks if xterm-crux is already available
+/// 2. If not, embeds the terminfo source and compiles it with `tic`
+/// 3. Installs to `~/.terminfo/` (user-local directory)
+/// 4. Verifies installation succeeded
+///
+/// Returns `true` if the terminfo is available after this call.
+pub fn ensure_terminfo_installed() -> bool {
+    // Check if already installed
+    if check_terminfo_available("xterm-crux") {
+        log::info!("xterm-crux terminfo already installed");
+        return true;
+    }
+
+    log::info!("xterm-crux terminfo not found, installing...");
+
+    // Embed the terminfo source from the repository
+    const TERMINFO_SRC: &str = include_str!("../../../extra/crux.terminfo");
+
+    // Create a temporary file for the terminfo source
+    let temp_dir = std::env::temp_dir();
+    let temp_path = temp_dir.join(format!(
+        "crux-terminfo-{}.src",
+        std::process::id()
+    ));
+
+    // Write the terminfo source to the temp file
+    if let Err(e) = std::fs::write(&temp_path, TERMINFO_SRC) {
+        log::warn!("Failed to write terminfo source to temp file: {}", e);
+        return false;
+    }
+
+    // Run tic to compile and install the terminfo
+    let result = std::process::Command::new("tic")
+        .args(["-x", "-e", "xterm-crux,crux,crux-direct"])
+        .arg(&temp_path)
+        .output();
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_path);
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                // Verify installation
+                if check_terminfo_available("xterm-crux") {
+                    log::info!("Successfully installed xterm-crux terminfo to ~/.terminfo/");
+                    true
+                } else {
+                    log::warn!("tic succeeded but xterm-crux still not found");
+                    false
+                }
+            } else {
+                log::warn!(
+                    "tic failed with exit code {:?}: {}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                false
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to run tic command: {}", e);
+            false
+        }
+    }
+}
+
 /// Detect the user's default shell.
 ///
 /// Priority order:
@@ -266,6 +332,23 @@ mod tests {
         assert!(
             !check_terminfo_available(""),
             "empty name should return false"
+        );
+    }
+
+    #[test]
+    fn test_ensure_terminfo_installed() {
+        // This test verifies that ensure_terminfo_installed() returns true,
+        // either because xterm-crux is already installed or because it
+        // successfully installs it.
+        assert!(
+            ensure_terminfo_installed(),
+            "ensure_terminfo_installed should return true after installation"
+        );
+
+        // Verify that xterm-crux is now available
+        assert!(
+            check_terminfo_available("xterm-crux"),
+            "xterm-crux should be available after ensure_terminfo_installed"
         );
     }
 }

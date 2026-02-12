@@ -6,4 +6,5 @@ mod input;
 mod mouse;
 mod view;
 
+pub use crux_terminal::ensure_terminfo_installed;
 pub use view::CruxTerminalView;

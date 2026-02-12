@@ -68,8 +68,8 @@
 - [x] Compile with `tic -x` (the `-x` flag is critical for non-standard extensions like `Tc`, `Su`)
   - Install: `tic -x -e xterm-crux,crux,crux-direct extra/crux.terminfo`
   - Verify: `infocmp -x xterm-crux`
-- [ ] Bundle in app: `Crux.app/Contents/Resources/terminfo/x/xterm-crux`
-  - Set `TERMINFO` or prepend to `TERMINFO_DIRS` at launch
+- [x] Bundle in app: `Crux.app/Contents/Resources/terminfo/x/xterm-crux`
+  - Terminfo source embedded via `include_str!`, auto-installed to `~/.terminfo/` via `tic` at launch
 - [x] Fallback logic: if `xterm-crux` terminfo not found, fall back to `TERM=xterm-256color`
 
 ### 1.3 Terminal Entity (crux-terminal)

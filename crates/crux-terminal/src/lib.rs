@@ -10,6 +10,7 @@ pub mod terminal;
 
 // Re-export primary types at crate root for convenience.
 pub use event::{CruxEventListener, TerminalEvent};
+pub use pty::ensure_terminfo_installed;
 pub use terminal::{
     CruxTerminal, CursorState, DamageState, IndexedCell, LineDamage, TerminalContent, TerminalSize,
 };
