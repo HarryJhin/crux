@@ -9,6 +9,30 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
+// JSON-RPC 2.0 identifier
+// ---------------------------------------------------------------------------
+
+/// JSON-RPC 2.0 request/response identifier.
+/// Can be a number, string, or null per the specification.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JsonRpcId {
+    Number(u64),
+    String(String),
+    Null,
+}
+
+impl fmt::Display for JsonRpcId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JsonRpcId::Number(n) => write!(f, "{n}"),
+            JsonRpcId::String(s) => write!(f, "{s}"),
+            JsonRpcId::Null => write!(f, "null"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Core ID types
 // ---------------------------------------------------------------------------
 
@@ -105,7 +129,9 @@ pub struct PaneSize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
-    pub id: u64,
+    /// `None` for JSON-RPC notifications (no response expected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<JsonRpcId>,
     pub method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
@@ -114,7 +140,7 @@ pub struct JsonRpcRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
-    pub id: u64,
+    pub id: JsonRpcId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,10 +156,20 @@ pub struct JsonRpcError {
 }
 
 impl JsonRpcRequest {
-    pub fn new(id: u64, method: impl Into<String>, params: Option<serde_json::Value>) -> Self {
+    pub fn new(id: JsonRpcId, method: impl Into<String>, params: Option<serde_json::Value>) -> Self {
         Self {
             jsonrpc: "2.0".into(),
-            id,
+            id: Some(id),
+            method: method.into(),
+            params,
+        }
+    }
+
+    /// Create a JSON-RPC notification (no id, no response expected).
+    pub fn notification(method: impl Into<String>, params: Option<serde_json::Value>) -> Self {
+        Self {
+            jsonrpc: "2.0".into(),
+            id: None,
             method: method.into(),
             params,
         }
@@ -141,7 +177,7 @@ impl JsonRpcRequest {
 }
 
 impl JsonRpcResponse {
-    pub fn success(id: u64, result: serde_json::Value) -> Self {
+    pub fn success(id: JsonRpcId, result: serde_json::Value) -> Self {
         Self {
             jsonrpc: "2.0".into(),
             id,
@@ -150,7 +186,7 @@ impl JsonRpcResponse {
         }
     }
 
-    pub fn error(id: u64, code: i32, message: impl Into<String>) -> Self {
+    pub fn error(id: JsonRpcId, code: i32, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0".into(),
             id,
@@ -328,28 +364,60 @@ pub mod error_code {
 // Length-prefix framing
 // ---------------------------------------------------------------------------
 
+/// Maximum frame payload size (16 MB).
+pub const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+
+/// Errors that can occur during frame encoding/decoding.
+#[derive(Debug)]
+pub enum FrameError {
+    /// The message exceeds [`MAX_FRAME_SIZE`].
+    MessageTooLarge(usize),
+}
+
+impl fmt::Display for FrameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FrameError::MessageTooLarge(size) => {
+                write!(f, "message too large: {size} bytes (max {MAX_FRAME_SIZE})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FrameError {}
+
 /// Encode a message with a 4-byte big-endian length prefix.
-pub fn encode_frame(msg: &[u8]) -> Vec<u8> {
-    let len = msg.len() as u32;
+pub fn encode_frame(msg: &[u8]) -> Result<Vec<u8>, FrameError> {
+    let len: u32 = msg
+        .len()
+        .try_into()
+        .map_err(|_| FrameError::MessageTooLarge(msg.len()))?;
+    if msg.len() > MAX_FRAME_SIZE {
+        return Err(FrameError::MessageTooLarge(msg.len()));
+    }
     let mut frame = Vec::with_capacity(4 + msg.len());
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(msg);
-    frame
+    Ok(frame)
 }
 
 /// Decode a frame from a buffer.
 ///
-/// Returns `Some((total_consumed_bytes, payload))` if a complete frame is
-/// available, or `None` if the buffer is incomplete.
-pub fn decode_frame(buf: &[u8]) -> Option<(usize, Vec<u8>)> {
+/// Returns `Ok(Some((total_consumed_bytes, payload)))` if a complete frame is
+/// available, `Ok(None)` if the buffer is incomplete, or `Err` if the frame
+/// exceeds the size limit.
+pub fn decode_frame(buf: &[u8]) -> Result<Option<(usize, Vec<u8>)>, FrameError> {
     if buf.len() < 4 {
-        return None;
+        return Ok(None);
     }
     let len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-    if buf.len() < 4 + len {
-        return None;
+    if len > MAX_FRAME_SIZE {
+        return Err(FrameError::MessageTooLarge(len));
     }
-    Some((4 + len, buf[4..4 + len].to_vec()))
+    if buf.len() < 4 + len {
+        return Ok(None);
+    }
+    Ok(Some((4 + len, buf[4..4 + len].to_vec())))
 }
 
 // ---------------------------------------------------------------------------
@@ -363,55 +431,108 @@ mod tests {
     #[test]
     fn frame_round_trip() {
         let payload = b"hello world";
-        let frame = encode_frame(payload);
-        let (consumed, decoded) = decode_frame(&frame).expect("should decode");
+        let frame = encode_frame(payload).expect("encode");
+        let (consumed, decoded) = decode_frame(&frame).expect("no error").expect("should decode");
         assert_eq!(consumed, frame.len());
         assert_eq!(decoded, payload);
     }
 
     #[test]
     fn frame_decode_incomplete_header() {
-        assert!(decode_frame(&[0x00, 0x00]).is_none());
+        assert!(decode_frame(&[0x00, 0x00]).unwrap().is_none());
     }
 
     #[test]
     fn frame_decode_incomplete_payload() {
-        let frame = encode_frame(b"hello");
+        let frame = encode_frame(b"hello").expect("encode");
         // Chop off the last byte so payload is incomplete.
-        assert!(decode_frame(&frame[..frame.len() - 1]).is_none());
+        assert!(decode_frame(&frame[..frame.len() - 1]).unwrap().is_none());
+    }
+
+    #[test]
+    fn frame_rejects_oversized() {
+        // Craft a header claiming a payload larger than MAX_FRAME_SIZE.
+        let huge_len = (MAX_FRAME_SIZE + 1) as u32;
+        let mut buf = huge_len.to_be_bytes().to_vec();
+        buf.push(0); // at least one byte so header is complete
+        assert!(decode_frame(&buf).is_err());
     }
 
     #[test]
     fn jsonrpc_request_serde() {
-        let req = JsonRpcRequest::new(1, method::PANE_LIST, None);
+        let req = JsonRpcRequest::new(JsonRpcId::Number(1), method::PANE_LIST, None);
         let json = serde_json::to_string(&req).unwrap();
         let parsed: JsonRpcRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.jsonrpc, "2.0");
-        assert_eq!(parsed.id, 1);
+        assert_eq!(parsed.id, Some(JsonRpcId::Number(1)));
         assert_eq!(parsed.method, "crux:pane/list");
         assert!(parsed.params.is_none());
     }
 
     #[test]
+    fn jsonrpc_request_string_id() {
+        let req = JsonRpcRequest::new(
+            JsonRpcId::String("abc-123".into()),
+            method::PANE_LIST,
+            None,
+        );
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: JsonRpcRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, Some(JsonRpcId::String("abc-123".into())));
+    }
+
+    #[test]
+    fn jsonrpc_notification_has_no_id() {
+        let req = JsonRpcRequest::notification(method::PANE_LIST, None);
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("\"id\""));
+        let parsed: JsonRpcRequest = serde_json::from_str(&json).unwrap();
+        assert!(parsed.id.is_none());
+    }
+
+    #[test]
     fn jsonrpc_response_success_serde() {
-        let resp = JsonRpcResponse::success(42, serde_json::json!({"ok": true}));
+        let resp = JsonRpcResponse::success(JsonRpcId::Number(42), serde_json::json!({"ok": true}));
         let json = serde_json::to_string(&resp).unwrap();
         // "error" field should be omitted
         assert!(!json.contains("\"error\""));
         let parsed: JsonRpcResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.id, 42);
+        assert_eq!(parsed.id, JsonRpcId::Number(42));
         assert!(parsed.result.is_some());
         assert!(parsed.error.is_none());
     }
 
     #[test]
     fn jsonrpc_response_error_serde() {
-        let resp = JsonRpcResponse::error(7, error_code::PANE_NOT_FOUND, "pane 99 not found");
+        let resp = JsonRpcResponse::error(
+            JsonRpcId::Number(7),
+            error_code::PANE_NOT_FOUND,
+            "pane 99 not found",
+        );
         let json = serde_json::to_string(&resp).unwrap();
         // "result" field should be omitted
         assert!(!json.contains("\"result\""));
         let parsed: JsonRpcResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.error.as_ref().unwrap().code, -1001);
+    }
+
+    #[test]
+    fn jsonrpc_response_null_id() {
+        let resp = JsonRpcResponse::error(
+            JsonRpcId::Null,
+            error_code::PARSE_ERROR,
+            "parse error",
+        );
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, JsonRpcId::Null);
+    }
+
+    #[test]
+    fn jsonrpc_id_display() {
+        assert_eq!(JsonRpcId::Number(42).to_string(), "42");
+        assert_eq!(JsonRpcId::String("abc".into()).to_string(), "abc");
+        assert_eq!(JsonRpcId::Null.to_string(), "null");
     }
 
     #[test]

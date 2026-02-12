@@ -9,7 +9,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot};
 
 use crux_protocol::{
-    decode_frame, encode_frame, error_code, method, JsonRpcRequest, JsonRpcResponse,
+    decode_frame, encode_frame, error_code, method, JsonRpcId, JsonRpcRequest, JsonRpcResponse,
 };
 
 use crate::command::IpcCommand;
@@ -31,26 +31,117 @@ pub async fn handle_client(
         pending.extend_from_slice(&buf[..n]);
 
         // Process all complete frames in the buffer.
-        while let Some((consumed, payload)) = decode_frame(&pending) {
-            let request: JsonRpcRequest = match serde_json::from_slice(&payload) {
-                Ok(r) => r,
+        loop {
+            let (consumed, payload) = match decode_frame(&pending) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break, // incomplete frame
                 Err(e) => {
-                    // We can't know the id if parsing failed, use 0.
+                    // Frame-level error (e.g. oversized). Send parse error and
+                    // drop the connection since we can't reliably re-sync.
                     let resp = JsonRpcResponse::error(
-                        0,
+                        JsonRpcId::Null,
                         error_code::PARSE_ERROR,
-                        format!("invalid JSON-RPC request: {e}"),
+                        format!("frame error: {e}"),
                     );
                     let resp_bytes = serde_json::to_vec(&resp)?;
-                    stream.write_all(&encode_frame(&resp_bytes)).await?;
+                    if let Ok(frame) = encode_frame(&resp_bytes) {
+                        let _ = stream.write_all(&frame).await;
+                    }
+                    return Ok(());
+                }
+            };
+
+            // Try to parse the payload as a JSON value first to support batch requests.
+            let value: serde_json::Value = match serde_json::from_slice(&payload) {
+                Ok(v) => v,
+                Err(e) => {
+                    // Fix 7: Parse error uses Null id.
+                    let resp = JsonRpcResponse::error(
+                        JsonRpcId::Null,
+                        error_code::PARSE_ERROR,
+                        format!("invalid JSON: {e}"),
+                    );
+                    let resp_bytes = serde_json::to_vec(&resp)?;
+                    if let Ok(frame) = encode_frame(&resp_bytes) {
+                        stream.write_all(&frame).await?;
+                    }
                     pending.drain(..consumed);
                     continue;
                 }
             };
 
-            let response = dispatch_request(request, &cmd_tx).await;
-            let resp_bytes = serde_json::to_vec(&response)?;
-            stream.write_all(&encode_frame(&resp_bytes)).await?;
+            // Fix 6: Batch request support.
+            match value {
+                serde_json::Value::Array(arr) => {
+                    if arr.is_empty() {
+                        let resp = JsonRpcResponse::error(
+                            JsonRpcId::Null,
+                            error_code::INVALID_REQUEST,
+                            "empty batch request".to_string(),
+                        );
+                        let resp_bytes = serde_json::to_vec(&resp)?;
+                        if let Ok(frame) = encode_frame(&resp_bytes) {
+                            stream.write_all(&frame).await?;
+                        }
+                    } else {
+                        let mut responses = Vec::new();
+                        for item in arr {
+                            match serde_json::from_value::<JsonRpcRequest>(item) {
+                                Ok(request) => {
+                                    if let Some(resp) =
+                                        dispatch_request(request, &cmd_tx).await
+                                    {
+                                        responses.push(resp);
+                                    }
+                                    // Notifications (None returned) are not added.
+                                }
+                                Err(e) => {
+                                    responses.push(JsonRpcResponse::error(
+                                        JsonRpcId::Null,
+                                        error_code::INVALID_REQUEST,
+                                        format!("invalid request in batch: {e}"),
+                                    ));
+                                }
+                            }
+                        }
+                        // Only send a response if there are any (all-notification batch
+                        // produces no response).
+                        if !responses.is_empty() {
+                            let resp_bytes = serde_json::to_vec(&responses)?;
+                            if let Ok(frame) = encode_frame(&resp_bytes) {
+                                stream.write_all(&frame).await?;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Single request.
+                    let request: JsonRpcRequest = match serde_json::from_value(value) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let resp = JsonRpcResponse::error(
+                                JsonRpcId::Null,
+                                error_code::INVALID_REQUEST,
+                                format!("invalid JSON-RPC request: {e}"),
+                            );
+                            let resp_bytes = serde_json::to_vec(&resp)?;
+                            if let Ok(frame) = encode_frame(&resp_bytes) {
+                                stream.write_all(&frame).await?;
+                            }
+                            pending.drain(..consumed);
+                            continue;
+                        }
+                    };
+
+                    // Fix 5: Only send response for non-notification requests.
+                    if let Some(response) = dispatch_request(request, &cmd_tx).await {
+                        let resp_bytes = serde_json::to_vec(&response)?;
+                        if let Ok(frame) = encode_frame(&resp_bytes) {
+                            stream.write_all(&frame).await?;
+                        }
+                    }
+                }
+            }
 
             pending.drain(..consumed);
         }
@@ -60,64 +151,85 @@ pub async fn handle_client(
 }
 
 /// Route a JSON-RPC request to the appropriate handler.
+///
+/// Returns `None` for notifications (requests without an id) per JSON-RPC 2.0 spec.
 async fn dispatch_request(
     req: JsonRpcRequest,
     cmd_tx: &mpsc::Sender<IpcCommand>,
-) -> JsonRpcResponse {
-    match req.method.as_str() {
+) -> Option<JsonRpcResponse> {
+    // Fix 4: Validate jsonrpc version.
+    if req.jsonrpc != "2.0" {
+        return Some(JsonRpcResponse::error(
+            req.id.clone().unwrap_or(JsonRpcId::Null),
+            error_code::INVALID_REQUEST,
+            "Invalid JSON-RPC version, must be \"2.0\"".to_string(),
+        ));
+    }
+
+    // Fix 5: If id is None, this is a notification — process but don't respond.
+    let is_notification = req.id.is_none();
+    let id = req.id.clone().unwrap_or(JsonRpcId::Null);
+
+    let response = match req.method.as_str() {
         method::HANDSHAKE => {
-            dispatch_with_params(req.id, req.params, cmd_tx, |params, reply| {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
                 IpcCommand::Handshake { params, reply }
             })
             .await
         }
         method::PANE_SPLIT => {
-            dispatch_with_params(req.id, req.params, cmd_tx, |params, reply| {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
                 IpcCommand::SplitPane { params, reply }
             })
             .await
         }
         method::PANE_SEND_TEXT => {
-            dispatch_with_params(req.id, req.params, cmd_tx, |params, reply| {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
                 IpcCommand::SendText { params, reply }
             })
             .await
         }
         method::PANE_GET_TEXT => {
-            dispatch_with_params(req.id, req.params, cmd_tx, |params, reply| {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
                 IpcCommand::GetText { params, reply }
             })
             .await
         }
         method::PANE_LIST => {
-            send_command(req.id, cmd_tx, |reply| IpcCommand::ListPanes { reply }).await
+            send_command(id.clone(), cmd_tx, |reply| IpcCommand::ListPanes { reply }).await
         }
         method::PANE_ACTIVATE => {
-            dispatch_with_params_unit(req.id, req.params, cmd_tx, |params, reply| {
+            dispatch_with_params_unit(id.clone(), req.params, cmd_tx, |params, reply| {
                 IpcCommand::ActivatePane { params, reply }
             })
             .await
         }
         method::PANE_CLOSE => {
-            dispatch_with_params_unit(req.id, req.params, cmd_tx, |params, reply| {
+            dispatch_with_params_unit(id.clone(), req.params, cmd_tx, |params, reply| {
                 IpcCommand::ClosePane { params, reply }
             })
             .await
         }
         method::WINDOW_CREATE => {
-            dispatch_with_params(req.id, req.params, cmd_tx, |params, reply| {
+            dispatch_with_params(id.clone(), req.params, cmd_tx, |params, reply| {
                 IpcCommand::WindowCreate { params, reply }
             })
             .await
         }
         method::WINDOW_LIST => {
-            send_command(req.id, cmd_tx, |reply| IpcCommand::WindowList { reply }).await
+            send_command(id.clone(), cmd_tx, |reply| IpcCommand::WindowList { reply }).await
         }
         _ => JsonRpcResponse::error(
-            req.id,
+            id,
             error_code::METHOD_NOT_FOUND,
             format!("unknown method: {}", req.method),
         ),
+    };
+
+    if is_notification {
+        None
+    } else {
+        Some(response)
     }
 }
 
@@ -127,7 +239,7 @@ async fn dispatch_request(
 
 /// Parse params, send a command that returns a serialisable result.
 async fn dispatch_with_params<P, R>(
-    id: u64,
+    id: JsonRpcId,
     params: Option<serde_json::Value>,
     cmd_tx: &mpsc::Sender<IpcCommand>,
     make_cmd: impl FnOnce(P, oneshot::Sender<anyhow::Result<R>>) -> IpcCommand,
@@ -136,7 +248,7 @@ where
     P: serde::de::DeserializeOwned,
     R: Serialize,
 {
-    let params: P = match parse_params(id, params) {
+    let params: P = match parse_params(id.clone(), params) {
         Ok(p) => p,
         Err(resp) => return *resp,
     };
@@ -145,7 +257,7 @@ where
 
 /// Parse params, send a command that returns `()` (mapped to `{"success": true}`).
 async fn dispatch_with_params_unit<P>(
-    id: u64,
+    id: JsonRpcId,
     params: Option<serde_json::Value>,
     cmd_tx: &mpsc::Sender<IpcCommand>,
     make_cmd: impl FnOnce(P, oneshot::Sender<anyhow::Result<()>>) -> IpcCommand,
@@ -153,7 +265,7 @@ async fn dispatch_with_params_unit<P>(
 where
     P: serde::de::DeserializeOwned,
 {
-    let params: P = match parse_params(id, params) {
+    let params: P = match parse_params(id.clone(), params) {
         Ok(p) => p,
         Err(resp) => return *resp,
     };
@@ -162,7 +274,7 @@ where
 
 /// Extract and deserialise `params` from a JSON-RPC request value.
 fn parse_params<P: serde::de::DeserializeOwned>(
-    id: u64,
+    id: JsonRpcId,
     params: Option<serde_json::Value>,
 ) -> Result<P, Box<JsonRpcResponse>> {
     let value = params.unwrap_or(serde_json::Value::Null);
@@ -177,7 +289,7 @@ fn parse_params<P: serde::de::DeserializeOwned>(
 
 /// Send a command through the channel and await a serialisable result.
 async fn send_command<T: Serialize>(
-    id: u64,
+    id: JsonRpcId,
     cmd_tx: &mpsc::Sender<IpcCommand>,
     make_cmd: impl FnOnce(oneshot::Sender<anyhow::Result<T>>) -> IpcCommand,
 ) -> JsonRpcResponse {
@@ -197,7 +309,7 @@ async fn send_command<T: Serialize>(
 
 /// Send a command that returns `()`, mapped to `{"success": true}`.
 async fn send_command_unit(
-    id: u64,
+    id: JsonRpcId,
     cmd_tx: &mpsc::Sender<IpcCommand>,
     make_cmd: impl FnOnce(oneshot::Sender<anyhow::Result<()>>) -> IpcCommand,
 ) -> JsonRpcResponse {
