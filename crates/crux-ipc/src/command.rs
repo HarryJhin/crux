@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 use crux_protocol::{
     ActivatePaneParams, ClosePaneParams, GetTextParams, GetTextResult, HandshakeParams,
     HandshakeResult, ListPanesResult, SendTextParams, SendTextResult, SplitPaneParams,
-    SplitPaneResult,
+    SplitPaneResult, WindowCreateParams, WindowCreateResult, WindowListResult,
 };
 
 /// Commands sent from the IPC server to the GPUI main thread.
@@ -39,5 +39,12 @@ pub enum IpcCommand {
     ClosePane {
         params: ClosePaneParams,
         reply: oneshot::Sender<anyhow::Result<()>>,
+    },
+    WindowCreate {
+        params: WindowCreateParams,
+        reply: oneshot::Sender<anyhow::Result<WindowCreateResult>>,
+    },
+    WindowList {
+        reply: oneshot::Sender<anyhow::Result<WindowListResult>>,
     },
 }

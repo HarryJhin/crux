@@ -104,6 +104,15 @@ async fn dispatch_request(
             })
             .await
         }
+        method::WINDOW_CREATE => {
+            dispatch_with_params(req.id, req.params, cmd_tx, |params, reply| {
+                IpcCommand::WindowCreate { params, reply }
+            })
+            .await
+        }
+        method::WINDOW_LIST => {
+            send_command(req.id, cmd_tx, |reply| IpcCommand::WindowList { reply }).await
+        }
         _ => JsonRpcResponse::error(
             req.id,
             error_code::METHOD_NOT_FOUND,

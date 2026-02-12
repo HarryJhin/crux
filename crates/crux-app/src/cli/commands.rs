@@ -99,4 +99,26 @@ pub enum CliAction {
         #[arg(long)]
         force: bool,
     },
+
+    /// Create a new window (single-window mode: returns existing window)
+    WindowCreate {
+        /// Window title
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Window width in pixels
+        #[arg(long)]
+        width: Option<u32>,
+
+        /// Window height in pixels
+        #[arg(long)]
+        height: Option<u32>,
+    },
+
+    /// List all windows
+    WindowList {
+        /// Output format: "table" (default) or "json"
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
 }
