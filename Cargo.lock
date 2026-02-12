@@ -1436,11 +1436,11 @@ dependencies = [
 name = "crux-clipboard"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "log",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1454,6 +1454,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1492,6 +1493,7 @@ dependencies = [
  "libc",
  "log",
  "portable-pty",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -6573,6 +6575,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

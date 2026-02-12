@@ -14,3 +14,4 @@ portable-pty.workspace = true
 anyhow.workspace = true
 log.workspace = true
 libc.workspace = true
+thiserror.workspace = true

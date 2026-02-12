@@ -20,6 +20,6 @@ serde_json.workspace = true
 anyhow.workspace = true
 log.workspace = true
 clap.workspace = true
-env_logger = "0.11"
+env_logger.workspace = true
 regex = "1"
 axum = "0.8"
