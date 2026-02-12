@@ -114,12 +114,14 @@ impl CruxApp {
             return None;
         }
 
-        // Spawn crux-mcp with --socket flag.
+        // Spawn crux-mcp with --http mode (stdio doesn't work for child processes).
         match std::process::Command::new(&mcp_binary)
+            .arg("--http")
             .arg("--socket")
             .arg(socket_path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::inherit())
             .spawn()
         {
             Ok(child) => {
