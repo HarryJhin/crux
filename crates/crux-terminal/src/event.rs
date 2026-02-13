@@ -29,6 +29,15 @@ pub struct SemanticZone {
     pub exit_code: Option<i32>,
 }
 
+/// Graphics protocol identifier for inline image support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphicsProtocol {
+    /// Kitty graphics protocol (APC-based, chunked transfer).
+    Kitty,
+    /// iTerm2 inline image protocol (OSC 1337).
+    Iterm2,
+}
+
 /// Events produced by the terminal emulator for the UI layer.
 #[derive(Debug, Clone)]
 pub enum TerminalEvent {
@@ -60,6 +69,11 @@ pub enum TerminalEvent {
     },
     /// Program requested clipboard write via OSC 52.
     ClipboardSet { data: String },
+    /// Inline graphics data received via Kitty APC or iTerm2 OSC 1337.
+    Graphics {
+        protocol: GraphicsProtocol,
+        payload: Vec<u8>,
+    },
     /// Cursor shape changed (e.g. Vim mode switch detected via DECSCUSR).
     CursorShapeChanged {
         old_shape: CursorShape,

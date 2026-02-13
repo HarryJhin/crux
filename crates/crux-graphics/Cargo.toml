@@ -1,5 +1,5 @@
 [package]
-name = "crux-terminal"
+name = "crux-graphics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,17 +9,16 @@ publish.workspace = true
 doctest = false
 
 [dependencies]
-alacritty_terminal.workspace = true
-portable-pty.workspace = true
-anyhow.workspace = true
 log.workspace = true
-libc.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+base64 = "0.22"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-crux-graphics.workspace = true
+proptest = "1"
+base64 = "0.22"
 
 [[bench]]
-name = "terminal_bench"
+name = "graphics_bench"
 harness = false

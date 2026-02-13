@@ -6,7 +6,10 @@ mod element;
 pub mod ime_switch;
 mod input;
 mod keyboard;
+#[allow(dead_code)]
+mod kitty_encode;
 mod mouse;
+pub mod url_detector;
 mod view;
 
 pub use crux_terminal::ensure_terminfo_installed;

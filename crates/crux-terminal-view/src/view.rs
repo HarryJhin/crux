@@ -514,6 +514,9 @@ impl CruxTerminalView {
                         }
                     }
                 }
+                TerminalEvent::Graphics { .. } => {
+                    // Graphics events are handled by the image manager (future).
+                }
             }
         }
         // Mark dirty if we received any events.

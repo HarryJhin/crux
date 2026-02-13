@@ -1,0 +1,15 @@
+[package]
+name = "crux-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+toml = "0.8"
+directories = "5"
+thiserror = { workspace = true }
+log = { workspace = true }
+notify = "7"
+notify-debouncer-mini = "0.5"

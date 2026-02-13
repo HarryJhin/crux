@@ -15,6 +15,8 @@
 
 pub mod client;
 pub mod command;
+#[cfg(test)]
+mod command_tests;
 pub mod handler;
 pub mod server;
 pub mod socket;

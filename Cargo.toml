@@ -7,6 +7,8 @@ members = [
     "crates/crux-ipc",
     "crates/crux-clipboard",
     "crates/crux-protocol",
+    "crates/crux-config",
+    "crates/crux-graphics",
     "crates/crux-mcp",
 ]
 default-members = ["crates/crux-app"]
@@ -24,6 +26,8 @@ crux-terminal-view = { path = "crates/crux-terminal-view" }
 crux-ipc = { path = "crates/crux-ipc" }
 crux-clipboard = { path = "crates/crux-clipboard" }
 crux-protocol = { path = "crates/crux-protocol" }
+crux-config = { path = "crates/crux-config" }
+crux-graphics = { path = "crates/crux-graphics" }
 
 # GPUI
 gpui = "0.2.2"
