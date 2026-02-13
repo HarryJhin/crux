@@ -193,10 +193,7 @@ impl ImageManager {
         if !self.images.contains_key(&id.0) {
             return Err(GraphicsError::ImageNotFound(id));
         }
-        self.placements
-            .entry(id.0)
-            .or_default()
-            .push(placement);
+        self.placements.entry(id.0).or_default().push(placement);
         Ok(())
     }
 
@@ -206,13 +203,13 @@ impl ImageManager {
         image_id: ImageId,
         placement_id: u32,
     ) -> Result<(), GraphicsError> {
-        let placements = self
-            .placements
-            .get_mut(&image_id.0)
-            .ok_or(GraphicsError::PlacementNotFound {
-                image_id,
-                placement_id,
-            })?;
+        let placements =
+            self.placements
+                .get_mut(&image_id.0)
+                .ok_or(GraphicsError::PlacementNotFound {
+                    image_id,
+                    placement_id,
+                })?;
 
         let initial_len = placements.len();
         placements.retain(|p| p.placement_id != placement_id);
@@ -235,7 +232,11 @@ impl ImageManager {
     /// Get all placements for images that intersect the given row range.
     ///
     /// Returns placements where the placement row falls within `[start_row, end_row)`.
-    pub fn get_placements_in_range(&mut self, start_row: i32, end_row: i32) -> Vec<&ImagePlacement> {
+    pub fn get_placements_in_range(
+        &mut self,
+        start_row: i32,
+        end_row: i32,
+    ) -> Vec<&ImagePlacement> {
         let mut result = Vec::new();
         for placements in self.placements.values() {
             for placement in placements {

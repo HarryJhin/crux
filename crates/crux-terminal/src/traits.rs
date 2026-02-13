@@ -5,7 +5,7 @@
 //! testing with mock implementations and future alternative backends.
 
 use alacritty_terminal::grid::Scroll;
-use alacritty_terminal::term::Term;
+use alacritty_terminal::term::{Term, TermMode};
 
 use crate::event::{CruxEventListener, SemanticZone, TerminalEvent};
 use crate::terminal::{TerminalContent, TerminalSize};
@@ -75,6 +75,14 @@ pub trait Terminal {
     fn with_term_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut Term<CruxEventListener>) -> R;
+
+    /// Get the current terminal mode flags without cloning the full content.
+    ///
+    /// This is more efficient than calling `content().mode` when you only
+    /// need to check mode flags (e.g., BRACKETED_PASTE).
+    fn mode(&self) -> TermMode {
+        self.with_term(|term| *term.mode())
+    }
 }
 
 #[cfg(test)]
@@ -247,6 +255,11 @@ pub mod mock {
                 CruxEventListener::new(tx)
             });
             f(&mut term)
+        }
+
+        fn mode(&self) -> TermMode {
+            // Return empty mode for mock terminal
+            TermMode::empty()
         }
     }
 }

@@ -41,7 +41,10 @@ pub enum DeleteTarget {
     /// Delete a specific image by ID (and all its placements).
     ById(ImageId),
     /// Delete a specific placement.
-    ByPlacement { image_id: ImageId, placement_id: u32 },
+    ByPlacement {
+        image_id: ImageId,
+        placement_id: u32,
+    },
     /// Delete all images at the cursor position.
     AtCursor,
     /// Delete all images intersecting a cell range.
@@ -134,7 +137,9 @@ impl KittyCommand {
             return Ok(Vec::new());
         }
         let engine = base64::engine::general_purpose::STANDARD;
-        engine.decode(&self.payload).map_err(GraphicsError::Base64Decode)
+        engine
+            .decode(&self.payload)
+            .map_err(GraphicsError::Base64Decode)
     }
 }
 
@@ -397,10 +402,7 @@ mod tests {
         let input = b"a=d,d=i,i=42";
         let cmd = parse_kitty_command(input).unwrap();
         assert_eq!(cmd.action, KittyAction::Delete);
-        assert_eq!(
-            cmd.delete_target,
-            Some(DeleteTarget::ById(ImageId(42)))
-        );
+        assert_eq!(cmd.delete_target, Some(DeleteTarget::ById(ImageId(42))));
     }
 
     #[test]

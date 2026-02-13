@@ -99,6 +99,7 @@ fn check_terminfo_available(name: &str) -> bool {
 /// Returns the master PTY handle and the child process.
 pub fn spawn_pty(
     shell: &str,
+    shell_args: &[String],
     size: &TerminalSize,
     cwd: Option<&str>,
     command: Option<&[String]>,
@@ -126,7 +127,10 @@ pub fn spawn_pty(
         builder
     } else {
         let mut builder = CommandBuilder::new(shell);
-        builder.arg("-l"); // login shell
+        // Use shell_args from config instead of hardcoded "-l"
+        for arg in shell_args {
+            builder.arg(arg);
+        }
         builder
     };
 

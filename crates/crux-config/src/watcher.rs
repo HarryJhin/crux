@@ -62,7 +62,9 @@ impl ConfigWatcher {
 
         // Canonicalize the config path to resolve symlinks (e.g. /var → /private/var on macOS).
         // Fall back to the original path if canonicalization fails (file may not exist yet).
-        let canonical_config = config_path.canonicalize().unwrap_or_else(|_| config_path.clone());
+        let canonical_config = config_path
+            .canonicalize()
+            .unwrap_or_else(|_| config_path.clone());
         let config_path_for_closure = canonical_config.clone();
 
         let mut debouncer = new_debouncer(
@@ -75,22 +77,23 @@ impl ConfigWatcher {
                         let config_changed = events.iter().any(|e| {
                             e.kind == DebouncedEventKind::Any
                                 && (e.path == config_path_for_closure
-                                    || e.path.canonicalize().ok().as_ref() == Some(&config_path_for_closure))
+                                    || e.path.canonicalize().ok().as_ref()
+                                        == Some(&config_path_for_closure))
                         });
 
                         if config_changed {
-                            let event = match CruxConfig::load_from(config_path_for_closure.as_path()) {
-                                Ok(config) => ConfigEvent::Reloaded(Box::new(config)),
-                                Err(e) => ConfigEvent::Error(e),
-                            };
+                            let event =
+                                match CruxConfig::load_from(config_path_for_closure.as_path()) {
+                                    Ok(config) => ConfigEvent::Reloaded(Box::new(config)),
+                                    Err(e) => ConfigEvent::Error(e),
+                                };
                             // Ignore send error — receiver may have been dropped.
                             let _ = event_tx.send(event);
                         }
                     }
                     Err(e) => {
-                        let _ = event_tx.send(ConfigEvent::Error(ConfigError::WatchError(
-                            e.to_string(),
-                        )));
+                        let _ = event_tx
+                            .send(ConfigEvent::Error(ConfigError::WatchError(e.to_string())));
                     }
                 }
             },
@@ -124,7 +127,8 @@ mod tests {
 
     #[test]
     fn test_config_watcher_creation_and_teardown() {
-        let tmp_dir = std::env::temp_dir().join(format!("crux-watcher-test-{}", std::process::id()));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("crux-watcher-test-{}", std::process::id()));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let config_path = tmp_dir.join("config.toml");
 
@@ -144,10 +148,8 @@ mod tests {
 
     #[test]
     fn test_config_watcher_detects_change() {
-        let tmp_dir = std::env::temp_dir().join(format!(
-            "crux-watcher-change-test-{}",
-            std::process::id()
-        ));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("crux-watcher-change-test-{}", std::process::id()));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let config_path = tmp_dir.join("config.toml");
 
@@ -159,11 +161,7 @@ mod tests {
         // Wait for the FSEvents watcher to fully settle before modifying.
         // macOS FSEvents can take up to ~1s to register a new watch.
         std::thread::sleep(Duration::from_millis(1000));
-        std::fs::write(
-            &config_path,
-            "[window]\nwidth = 1024.0\nheight = 768.0\n",
-        )
-        .unwrap();
+        std::fs::write(&config_path, "[window]\nwidth = 1024.0\nheight = 768.0\n").unwrap();
 
         // Wait for debounced event (500ms debounce + FSEvents latency).
         match rx.recv_timeout(Duration::from_secs(5)) {
@@ -192,10 +190,8 @@ mod tests {
         assert!(result.is_ok(), "Watcher should create missing directories");
 
         // Cleanup.
-        let parent = std::env::temp_dir().join(format!(
-            "crux-watcher-nodir-test-{}",
-            std::process::id()
-        ));
+        let parent =
+            std::env::temp_dir().join(format!("crux-watcher-nodir-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&parent);
     }
 }

@@ -27,7 +27,8 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         let target = max.saturating_sub(3);
-        let end = s.char_indices()
+        let end = s
+            .char_indices()
             .map(|(i, _)| i)
             .take_while(|&i| i <= target)
             .last()
@@ -67,7 +68,7 @@ mod tests {
         // With max=10, target=7, should fit "안녕하세" (4 chars) + "..."
         assert!(result.ends_with("..."));
         assert!(result.len() <= 10 + 3); // Allow for multi-byte chars
-        // Verify no panic and valid UTF-8
+                                         // Verify no panic and valid UTF-8
         assert!(result.is_char_boundary(result.len() - 3));
     }
 
@@ -101,7 +102,7 @@ mod tests {
         // Should handle 4-byte chars correctly
         assert!(result.ends_with("..."));
         assert!(result.len() <= 15 + 7); // Allow for emoji bytes
-        // Verify valid UTF-8 (no panic means success)
+                                         // Verify valid UTF-8 (no panic means success)
     }
 
     #[test]

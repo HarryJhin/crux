@@ -384,8 +384,7 @@ mod tests {
 
     #[test]
     fn jsonrpc_request_string_id() {
-        let req =
-            JsonRpcRequest::new(JsonRpcId::String("abc-123".into()), method::PANE_LIST, None);
+        let req = JsonRpcRequest::new(JsonRpcId::String("abc-123".into()), method::PANE_LIST, None);
         let json = serde_json::to_string(&req).unwrap();
         let parsed: JsonRpcRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, Some(JsonRpcId::String("abc-123".into())));
@@ -402,8 +401,7 @@ mod tests {
 
     #[test]
     fn jsonrpc_response_success_serde() {
-        let resp =
-            JsonRpcResponse::success(JsonRpcId::Number(42), serde_json::json!({"ok": true}));
+        let resp = JsonRpcResponse::success(JsonRpcId::Number(42), serde_json::json!({"ok": true}));
         let json = serde_json::to_string(&resp).unwrap();
         assert!(!json.contains("\"error\""));
         let parsed: JsonRpcResponse = serde_json::from_str(&json).unwrap();
@@ -427,8 +425,7 @@ mod tests {
 
     #[test]
     fn jsonrpc_response_null_id() {
-        let resp =
-            JsonRpcResponse::error(JsonRpcId::Null, error_code::PARSE_ERROR, "parse error");
+        let resp = JsonRpcResponse::error(JsonRpcId::Null, error_code::PARSE_ERROR, "parse error");
         let json = serde_json::to_string(&resp).unwrap();
         let parsed: JsonRpcResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, JsonRpcId::Null);

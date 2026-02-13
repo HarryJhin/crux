@@ -2,7 +2,7 @@
 
 use gpui::*;
 
-use crux_terminal::TermMode;
+use crux_terminal::{Terminal, TermMode};
 
 use crate::view::CruxTerminalView;
 
@@ -61,7 +61,9 @@ impl CruxTerminalView {
 
     /// Write data to PTY, wrapping in bracketed paste mode if enabled.
     pub(crate) fn write_to_pty_with_bracketed_paste(&mut self, data: &[u8]) {
-        let mode = self.terminal.content().mode;
+        // Use mode() instead of content().mode to avoid cloning the entire terminal content
+        // just to read a single mode flag.
+        let mode = self.terminal.mode();
         if mode.contains(TermMode::BRACKETED_PASTE) {
             self.terminal.write_to_pty(b"\x1b[200~");
             self.terminal.write_to_pty(data);

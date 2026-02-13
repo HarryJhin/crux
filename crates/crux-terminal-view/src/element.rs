@@ -34,6 +34,7 @@ pub struct RenderConfig {
     pub bell_active: bool,
     pub cursor_visible: bool,
     pub marked_text: Option<String>,
+    pub color_config: crux_config::ColorConfig,
 }
 
 /// Render the terminal content as a canvas element.
@@ -50,10 +51,11 @@ pub fn render_terminal_canvas(config: RenderConfig) -> impl IntoElement {
         bell_active,
         cursor_visible,
         marked_text,
+        color_config,
     } = config;
-    let fg_color = colors::foreground_hsla();
-    let bg_color = colors::background_hsla();
-    let cursor_color = colors::cursor_hsla();
+    let fg_color = colors::foreground_hsla(&color_config);
+    let bg_color = colors::background_hsla(&color_config);
+    let cursor_color = colors::cursor_hsla(&color_config);
 
     // Selection highlight: use the foreground color with reduced alpha.
     let selection_color = Hsla {

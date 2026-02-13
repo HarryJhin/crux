@@ -174,12 +174,7 @@ mod tests {
 
     #[test]
     fn test_rgba_to_bgra_conversion() {
-        let mut img = ImageData::new(
-            vec![255, 0, 0, 128, 0, 255, 0, 64],
-            2,
-            1,
-            PixelFormat::Rgba,
-        );
+        let mut img = ImageData::new(vec![255, 0, 0, 128, 0, 255, 0, 64], 2, 1, PixelFormat::Rgba);
         img.to_bgra();
         assert_eq!(img.format, PixelFormat::Bgra);
         // Red pixel with alpha 128 -> BGRA(0, 0, 255, 128)

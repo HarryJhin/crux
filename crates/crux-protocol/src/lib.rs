@@ -21,13 +21,12 @@ pub use types::{
 pub use rpc::{
     ActivatePaneParams, ClipboardContentType, ClipboardReadParams, ClipboardReadResult,
     ClipboardWriteParams, ClosePaneParams, EventsPollResult, EventsSubscribeParams,
-    GetSelectionParams,
-    GetSelectionResult, GetSnapshotParams, GetSnapshotResult, GetTextParams, GetTextResult,
-    HandshakeParams, HandshakeResult, ImeSetInputSourceParams, ImeStateResult, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, ListPanesResult, ResizePaneParams, SendTextParams,
-    SendTextResult, SessionLoadParams, SessionLoadResult, SessionSaveParams, SessionSaveResult,
-    SplitPaneParams, SplitPaneResult, WindowCreateParams, WindowCreateResult, WindowInfo,
-    WindowListResult,
+    GetSelectionParams, GetSelectionResult, GetSnapshotParams, GetSnapshotResult, GetTextParams,
+    GetTextResult, HandshakeParams, HandshakeResult, ImeSetInputSourceParams, ImeStateResult,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, ListPanesResult, ResizePaneParams,
+    SendTextParams, SendTextResult, SessionLoadParams, SessionLoadResult, SessionSaveParams,
+    SessionSaveResult, SplitPaneParams, SplitPaneResult, WindowCreateParams, WindowCreateResult,
+    WindowInfo, WindowListResult,
 };
 
 // framing

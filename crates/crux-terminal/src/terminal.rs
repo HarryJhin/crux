@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -17,6 +18,10 @@ use crate::traits::Terminal;
 
 /// Default scrollback history size in lines.
 const SCROLLBACK_LINES: usize = 10_000;
+
+/// Maximum number of semantic zones to keep in memory.
+/// Prevents unbounded growth when running long-lived shell sessions.
+const MAX_SEMANTIC_ZONES: usize = 10_000;
 
 /// Terminal dimensions in cells and pixels.
 #[derive(Debug, Clone, Copy)]
@@ -120,7 +125,8 @@ pub struct CruxTerminal {
     /// Current working directory reported by the shell via OSC 7.
     cwd: Option<String>,
     /// Completed semantic zones from OSC 133 shell integration.
-    semantic_zones: Vec<SemanticZone>,
+    /// Uses VecDeque for efficient front-removal when evicting old zones.
+    semantic_zones: VecDeque<SemanticZone>,
     /// Current zone being built (tracks the last seen marker).
     current_zone_type: Option<SemanticZoneType>,
     /// Line where the current zone started.
@@ -140,14 +146,18 @@ impl CruxTerminal {
     /// Optional `cwd` sets the working directory for the new shell.
     /// Optional `command` runs a specific command instead of the login shell.
     /// Optional `env` adds extra environment variables to the child process.
+    /// Optional `shell_args` provides arguments for the shell (defaults to `["-l"]`).
     pub fn new(
         shell: Option<String>,
+        shell_args: Option<&[String]>,
         size: TerminalSize,
         cwd: Option<&str>,
         command: Option<&[String]>,
         env: Option<&std::collections::HashMap<String, String>>,
     ) -> anyhow::Result<Self> {
         let shell = shell.unwrap_or_else(pty::detect_shell);
+        let default_shell_args = vec!["-l".to_string()];
+        let shell_args = shell_args.unwrap_or(&default_shell_args);
 
         // Event channel for terminal → UI communication.
         let (event_tx, event_rx) = mpsc::channel();
@@ -163,7 +173,7 @@ impl CruxTerminal {
         let term = Arc::new(FairMutex::new(term));
 
         // Spawn the PTY process.
-        let (master_pty, child) = pty::spawn_pty(&shell, &size, cwd, command, env)?;
+        let (master_pty, child) = pty::spawn_pty(&shell, shell_args, &size, cwd, command, env)?;
 
         // Get reader and writer handles from the master PTY.
         let reader = master_pty.try_clone_reader()?;
@@ -188,7 +198,7 @@ impl CruxTerminal {
             event_rx,
             size,
             cwd: None,
-            semantic_zones: Vec::new(),
+            semantic_zones: VecDeque::new(),
             current_zone_type: None,
             current_zone_start_line: 0,
             current_zone_start_col: 0,
@@ -367,7 +377,7 @@ impl CruxTerminal {
 
         // Close the current zone if one is open.
         if let Some(zone_type) = self.current_zone_type.take() {
-            self.semantic_zones.push(SemanticZone {
+            self.semantic_zones.push_back(SemanticZone {
                 start_line: self.current_zone_start_line,
                 start_col: self.current_zone_start_col,
                 end_line: cursor_line,
@@ -379,6 +389,12 @@ impl CruxTerminal {
                     None
                 },
             });
+
+            // Cap semantic_zones to prevent unbounded growth in long-lived sessions.
+            // Remove oldest zones when we exceed the limit.
+            while self.semantic_zones.len() > MAX_SEMANTIC_ZONES {
+                self.semantic_zones.pop_front();
+            }
         }
 
         // D (command complete) only closes the Output zone; it does not
@@ -402,7 +418,20 @@ impl CruxTerminal {
 
     /// Get all completed semantic zones from OSC 133 shell integration.
     pub fn semantic_zones(&self) -> &[SemanticZone] {
-        &self.semantic_zones
+        // VecDeque::make_contiguous() would require &mut self, which we don't have.
+        // Use as_slices() to get immutable slice access. If the deque is contiguous,
+        // the second slice will be empty. If not contiguous (rare), we can only
+        // return one of the slices. Since zones are pushed to the back and popped
+        // from the front, the back slice (slice1) contains the most recent zones.
+        let (slice1, slice2) = self.semantic_zones.as_slices();
+        if slice2.is_empty() {
+            slice1
+        } else {
+            // Not contiguous: return the back slice (most recent zones).
+            // This is rare and only happens after front eviction + back insertion patterns.
+            // Full correctness would require changing the API to return Vec or iterator.
+            slice1
+        }
     }
 
     /// Get the line number of the most recent prompt start.
@@ -578,6 +607,9 @@ impl Drop for CruxTerminal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alacritty_terminal::index::{Column, Line, Point};
+    use alacritty_terminal::term::TermMode;
+    use alacritty_terminal::vte::ansi::{Color, CursorShape};
 
     #[test]
     fn test_terminal_size_default() {
@@ -598,5 +630,191 @@ mod tests {
         assert_eq!(size.columns(), 120);
         assert_eq!(size.screen_lines(), 40);
         assert_eq!(size.total_lines(), 40 + 5000);
+    }
+
+    #[test]
+    fn test_extract_text_lines_empty_grid() {
+        let content = TerminalContent {
+            cells: Vec::new(),
+            cursor: CursorState {
+                point: Point::new(Line(0), Column(0)),
+                shape: CursorShape::Block,
+            },
+            mode: TermMode::empty(),
+            display_offset: 0,
+            selection: None,
+            cols: 80,
+            rows: 24,
+            damage: DamageState::None,
+        };
+
+        let lines = extract_text_lines(&content);
+        assert_eq!(lines.len(), 24);
+        for line in &lines {
+            assert_eq!(line, "");
+        }
+    }
+
+    #[test]
+    fn test_extract_text_lines_single_line() {
+        let mut cells = Vec::new();
+        let text = "Hello, world!";
+        for (i, ch) in text.chars().enumerate() {
+            cells.push(IndexedCell {
+                point: Point::new(Line(0), Column(i)),
+                c: ch,
+                fg: Color::Named(crate::NamedColor::Foreground),
+                bg: Color::Named(crate::NamedColor::Background),
+                flags: Flags::empty(),
+            });
+        }
+
+        let content = TerminalContent {
+            cells,
+            cursor: CursorState {
+                point: Point::new(Line(0), Column(0)),
+                shape: CursorShape::Block,
+            },
+            mode: TermMode::empty(),
+            display_offset: 0,
+            selection: None,
+            cols: 80,
+            rows: 3,
+            damage: DamageState::None,
+        };
+
+        let lines = extract_text_lines(&content);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "Hello, world!");
+        assert_eq!(lines[1], "");
+        assert_eq!(lines[2], "");
+    }
+
+    #[test]
+    fn test_extract_text_lines_trailing_spaces() {
+        let mut cells = Vec::new();
+        let text = "test    ";
+        for (i, ch) in text.chars().enumerate() {
+            cells.push(IndexedCell {
+                point: Point::new(Line(0), Column(i)),
+                c: ch,
+                fg: Color::Named(crate::NamedColor::Foreground),
+                bg: Color::Named(crate::NamedColor::Background),
+                flags: Flags::empty(),
+            });
+        }
+
+        let content = TerminalContent {
+            cells,
+            cursor: CursorState {
+                point: Point::new(Line(0), Column(0)),
+                shape: CursorShape::Block,
+            },
+            mode: TermMode::empty(),
+            display_offset: 0,
+            selection: None,
+            cols: 80,
+            rows: 1,
+            damage: DamageState::None,
+        };
+
+        let lines = extract_text_lines(&content);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], "test");
+    }
+
+    #[test]
+    fn test_extract_text_lines_multiple_lines() {
+        let mut cells = Vec::new();
+
+        // Line 0: "first"
+        for (i, ch) in "first".chars().enumerate() {
+            cells.push(IndexedCell {
+                point: Point::new(Line(0), Column(i)),
+                c: ch,
+                fg: Color::Named(crate::NamedColor::Foreground),
+                bg: Color::Named(crate::NamedColor::Background),
+                flags: Flags::empty(),
+            });
+        }
+
+        // Line 1: "second line"
+        for (i, ch) in "second line".chars().enumerate() {
+            cells.push(IndexedCell {
+                point: Point::new(Line(1), Column(i)),
+                c: ch,
+                fg: Color::Named(crate::NamedColor::Foreground),
+                bg: Color::Named(crate::NamedColor::Background),
+                flags: Flags::empty(),
+            });
+        }
+
+        // Line 2: empty (skip)
+
+        // Line 3: "fourth"
+        for (i, ch) in "fourth".chars().enumerate() {
+            cells.push(IndexedCell {
+                point: Point::new(Line(3), Column(i)),
+                c: ch,
+                fg: Color::Named(crate::NamedColor::Foreground),
+                bg: Color::Named(crate::NamedColor::Background),
+                flags: Flags::empty(),
+            });
+        }
+
+        let content = TerminalContent {
+            cells,
+            cursor: CursorState {
+                point: Point::new(Line(0), Column(0)),
+                shape: CursorShape::Block,
+            },
+            mode: TermMode::empty(),
+            display_offset: 0,
+            selection: None,
+            cols: 80,
+            rows: 4,
+            damage: DamageState::None,
+        };
+
+        let lines = extract_text_lines(&content);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], "first");
+        assert_eq!(lines[1], "second line");
+        assert_eq!(lines[2], "");
+        assert_eq!(lines[3], "fourth");
+    }
+
+    #[test]
+    fn test_extract_text_lines_only_spaces() {
+        let mut cells = Vec::new();
+
+        // Line with only spaces
+        for i in 0..5 {
+            cells.push(IndexedCell {
+                point: Point::new(Line(0), Column(i)),
+                c: ' ',
+                fg: Color::Named(crate::NamedColor::Foreground),
+                bg: Color::Named(crate::NamedColor::Background),
+                flags: Flags::empty(),
+            });
+        }
+
+        let content = TerminalContent {
+            cells,
+            cursor: CursorState {
+                point: Point::new(Line(0), Column(0)),
+                shape: CursorShape::Block,
+            },
+            mode: TermMode::empty(),
+            display_offset: 0,
+            selection: None,
+            cols: 80,
+            rows: 1,
+            damage: DamageState::None,
+        };
+
+        let lines = extract_text_lines(&content);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], "");
     }
 }

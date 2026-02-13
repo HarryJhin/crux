@@ -290,10 +290,7 @@ async fn dispatch_request(
             .await
         }
         method::EVENTS_POLL => {
-            send_command(id.clone(), cmd_tx, |reply| IpcCommand::EventsPoll {
-                reply,
-            })
-            .await
+            send_command(id.clone(), cmd_tx, |reply| IpcCommand::EventsPoll { reply }).await
         }
         _ => JsonRpcResponse::error(
             id,
@@ -402,9 +399,9 @@ async fn send_command_unit(
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc;
-    use crux_protocol::{JsonRpcRequest, JsonRpcId, HandshakeResult, error_code, method};
+    use crux_protocol::{error_code, method, HandshakeResult, JsonRpcId, JsonRpcRequest};
     use serde_json::json;
+    use tokio::sync::mpsc;
 
     use super::dispatch_request;
 
@@ -421,7 +418,10 @@ mod tests {
 
         let response = dispatch_request(request, &cmd_tx).await.unwrap();
 
-        let err = response.error.as_ref().expect("should be an error response");
+        let err = response
+            .error
+            .as_ref()
+            .expect("should be an error response");
         assert_eq!(err.code, error_code::METHOD_NOT_FOUND);
         assert!(err.message.contains("unknown method"));
 
@@ -443,7 +443,10 @@ mod tests {
 
         let response = dispatch_request(request, &cmd_tx).await.unwrap();
 
-        let err = response.error.as_ref().expect("should be an error response");
+        let err = response
+            .error
+            .as_ref()
+            .expect("should be an error response");
         assert_eq!(err.code, error_code::INVALID_PARAMS);
         assert!(err.message.contains("invalid params"));
 
@@ -495,9 +498,7 @@ mod tests {
         };
 
         // Spawn a task to handle the command
-        let response_handle = tokio::spawn(async move {
-            dispatch_request(request, &cmd_tx).await
-        });
+        let response_handle = tokio::spawn(async move { dispatch_request(request, &cmd_tx).await });
 
         // Receive the command and reply
         if let Some(cmd) = cmd_rx.recv().await {
@@ -533,7 +534,10 @@ mod tests {
 
         let response = dispatch_request(request, &cmd_tx).await.unwrap();
 
-        let err = response.error.as_ref().expect("should be an error response");
+        let err = response
+            .error
+            .as_ref()
+            .expect("should be an error response");
         assert_eq!(err.code, error_code::INVALID_REQUEST);
         assert!(err.message.contains("JSON-RPC version"));
 

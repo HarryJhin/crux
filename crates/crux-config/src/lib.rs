@@ -58,10 +58,7 @@ impl CruxConfig {
     /// Returns default configuration if the file doesn't exist.
     pub fn load_from(path: &Path) -> Result<Self, ConfigError> {
         if !path.exists() {
-            log::info!(
-                "No config file found at {}, using defaults",
-                path.display()
-            );
+            log::info!("No config file found at {}, using defaults", path.display());
             return Ok(Self::default());
         }
 

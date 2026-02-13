@@ -282,7 +282,9 @@ impl CruxApp {
                             Ok(content) => {
                                 let read_result = match content {
                                     crux_clipboard::ClipboardContent::Text(text) => {
-                                        if params.content_type == crux_protocol::ClipboardContentType::Image {
+                                        if params.content_type
+                                            == crux_protocol::ClipboardContentType::Image
+                                        {
                                             Err(anyhow::anyhow!("no image in clipboard"))
                                         } else {
                                             Ok(crux_protocol::ClipboardReadResult::Text { text })
@@ -346,16 +348,24 @@ impl CruxApp {
                             crux_protocol::ClipboardContentType::Image => {
                                 if let Some(path) = &params.image_path {
                                     let path_obj = std::path::Path::new(path);
-                                    let ext = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
-                                    if !matches!(ext.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff") {
-                                        Err(anyhow::anyhow!("image path must have a valid image extension"))
+                                    let ext =
+                                        path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
+                                    if !matches!(
+                                        ext.to_lowercase().as_str(),
+                                        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff"
+                                    ) {
+                                        Err(anyhow::anyhow!(
+                                            "image path must have a valid image extension"
+                                        ))
                                     } else {
                                         match std::fs::read(path) {
                                             Ok(data) => {
                                                 crux_clipboard::Clipboard::write_image(&data, mtm)
                                                     .map_err(|e| anyhow::anyhow!("{e}"))
                                             }
-                                            Err(e) => Err(anyhow::anyhow!("failed to read image: {e}")),
+                                            Err(e) => {
+                                                Err(anyhow::anyhow!("failed to read image: {e}"))
+                                            }
                                         }
                                     }
                                 } else {
@@ -364,7 +374,9 @@ impl CruxApp {
                                     ))
                                 }
                             }
-                            crux_protocol::ClipboardContentType::Auto => Err(anyhow::anyhow!("content_type 'auto' not supported for clipboard write"))
+                            crux_protocol::ClipboardContentType::Auto => Err(anyhow::anyhow!(
+                                "content_type 'auto' not supported for clipboard write"
+                            )),
                         };
                         let _ = reply.send(result);
                     } else {
@@ -484,6 +496,12 @@ impl CruxApp {
                 Self::find_stack_panel_containing(&items, &target_view, cx)
             {
                 stack_panel.update(cx, |sp, cx| {
+                    // StackPanel only controls one dimension based on its orientation:
+                    // - Horizontal (Axis::Horizontal): controls width
+                    // - Vertical (Axis::Vertical): controls height
+                    // Since axis field is now private, we try the appropriate dimension
+                    // based on what the caller provided. The resize operation will only
+                    // apply if it matches the stack's axis.
                     if let Some(w) = width {
                         sp.resize_panel_at(ix, px(w), window, cx);
                     }
@@ -515,7 +533,10 @@ impl CruxApp {
         depth: usize,
     ) -> Option<(Entity<StackPanel>, usize)> {
         if depth > crate::app::MAX_DOCK_DEPTH {
-            log::warn!("find_stack_panel_containing: max depth {} exceeded, stopping recursion", crate::app::MAX_DOCK_DEPTH);
+            log::warn!(
+                "find_stack_panel_containing: max depth {} exceeded, stopping recursion",
+                crate::app::MAX_DOCK_DEPTH
+            );
             return None;
         }
         match item {
@@ -531,9 +552,12 @@ impl CruxApp {
                             }
                             DockItem::Split { .. } => {
                                 // Recurse into nested splits — the pane might be deeper.
-                                if let Some(result) =
-                                    Self::find_stack_panel_containing_recursive(child, target, cx, depth + 1)
-                                {
+                                if let Some(result) = Self::find_stack_panel_containing_recursive(
+                                    child,
+                                    target,
+                                    cx,
+                                    depth + 1,
+                                ) {
                                     return Some(result);
                                 }
                                 // If not found deeper, the target is directly in this split.
@@ -550,9 +574,17 @@ impl CruxApp {
     }
 
     /// Check if a DockItem (recursively) contains the target pane view.
-    fn dock_item_contains_pane(item: &DockItem, target: &Arc<dyn PanelView>, _cx: &App, depth: usize) -> bool {
+    fn dock_item_contains_pane(
+        item: &DockItem,
+        target: &Arc<dyn PanelView>,
+        _cx: &App,
+        depth: usize,
+    ) -> bool {
         if depth > crate::app::MAX_DOCK_DEPTH {
-            log::warn!("dock_item_contains_pane: max depth {} exceeded, stopping recursion", crate::app::MAX_DOCK_DEPTH);
+            log::warn!(
+                "dock_item_contains_pane: max depth {} exceeded, stopping recursion",
+                crate::app::MAX_DOCK_DEPTH
+            );
             return false;
         }
         match item {
@@ -680,14 +712,20 @@ mod tests {
         let read_params = ClipboardReadParams {
             content_type: crux_protocol::ClipboardContentType::Text,
         };
-        assert_eq!(read_params.content_type, crux_protocol::ClipboardContentType::Text);
+        assert_eq!(
+            read_params.content_type,
+            crux_protocol::ClipboardContentType::Text
+        );
 
         let write_params = ClipboardWriteParams {
             content_type: crux_protocol::ClipboardContentType::Text,
             text: Some("hello".into()),
             image_path: None,
         };
-        assert_eq!(write_params.content_type, crux_protocol::ClipboardContentType::Text);
+        assert_eq!(
+            write_params.content_type,
+            crux_protocol::ClipboardContentType::Text
+        );
         assert_eq!(write_params.text.as_deref(), Some("hello"));
         assert!(write_params.image_path.is_none());
     }

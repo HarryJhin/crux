@@ -1,5 +1,6 @@
 //! Color conversion from alacritty_terminal colors to GPUI Hsla.
 
+use crux_config::ColorConfig;
 use crux_terminal::{Color, NamedColor};
 use gpui::Hsla;
 
@@ -118,18 +119,24 @@ fn rgb_to_hsla(r: u8, g: u8, b: u8) -> Hsla {
 }
 
 /// Background color as GPUI Hsla.
-pub(crate) fn background_hsla() -> Hsla {
-    hex_to_hsla(BACKGROUND)
+///
+/// Uses the color from `config` if available, otherwise falls back to the hardcoded default.
+pub(crate) fn background_hsla(config: &ColorConfig) -> Hsla {
+    hex_to_hsla(config.background)
 }
 
 /// Foreground color as GPUI Hsla.
-pub(crate) fn foreground_hsla() -> Hsla {
-    hex_to_hsla(FOREGROUND)
+///
+/// Uses the color from `config` if available, otherwise falls back to the hardcoded default.
+pub(crate) fn foreground_hsla(config: &ColorConfig) -> Hsla {
+    hex_to_hsla(config.foreground)
 }
 
 /// Cursor color as GPUI Hsla.
-pub(crate) fn cursor_hsla() -> Hsla {
-    hex_to_hsla(CURSOR)
+///
+/// Uses the color from `config` if available, otherwise falls back to the hardcoded default.
+pub(crate) fn cursor_hsla(config: &ColorConfig) -> Hsla {
+    hex_to_hsla(config.cursor)
 }
 
 #[cfg(test)]
@@ -256,17 +263,21 @@ mod tests {
 
     #[test]
     fn test_background_foreground_cursor_helpers() {
+        use crux_config::ColorConfig;
+        let config = ColorConfig::default();
+
         // Just verify they return valid colors without panicking
-        let _ = background_hsla();
-        let _ = foreground_hsla();
-        let _ = cursor_hsla();
+        let _ = background_hsla(&config);
+        let _ = foreground_hsla(&config);
+        let _ = cursor_hsla(&config);
 
         // Background and foreground should be different
-        let bg = hsla_to_rgb_u8(background_hsla());
-        let fg = hsla_to_rgb_u8(foreground_hsla());
+        let bg = hsla_to_rgb_u8(background_hsla(&config));
+        let fg = hsla_to_rgb_u8(foreground_hsla(&config));
         assert_ne!(
             bg, fg,
             "background and foreground should be different colors"
         );
     }
+
 }

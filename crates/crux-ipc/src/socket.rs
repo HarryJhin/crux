@@ -21,8 +21,7 @@ pub fn socket_path() -> PathBuf {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ =
-                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
             }
         }
     }
@@ -152,7 +151,10 @@ mod tests {
         };
         let path = resolve_socket_path(&env);
         let pid = std::process::id();
-        assert_eq!(path, PathBuf::from(format!("/run/user/1000/crux/gui-sock-{pid}")));
+        assert_eq!(
+            path,
+            PathBuf::from(format!("/run/user/1000/crux/gui-sock-{pid}"))
+        );
     }
 
     #[test]

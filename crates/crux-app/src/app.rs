@@ -44,13 +44,17 @@ impl CruxApp {
             CruxConfig::default()
         });
 
+        // Set CRUX_SOCKET env var BEFORE starting IPC server to ensure it's set
+        // before any async tasks are spawned.
+        let socket_path_for_env = crux_ipc::socket_path();
+        // SAFETY: Called during app initialization before any background threads are spawned.
+        // No concurrent readers of this environment variable exist at this point.
+        unsafe { std::env::set_var("CRUX_SOCKET", &socket_path_for_env) };
+
         // Start IPC server.
         let (socket_path, ipc_rx, ipc_cancel) = match crux_ipc::start_ipc() {
             Ok((path, rx, cancel_token)) => {
                 log::info!("IPC server started at {}", path.display());
-                // SAFETY: Called during app initialization before any background threads are spawned.
-                // No concurrent readers of this environment variable exist at this point.
-                unsafe { std::env::set_var("CRUX_SOCKET", &path) };
                 (Some(path), Some(rx), Some(cancel_token))
             }
             Err(e) => {
@@ -73,19 +77,25 @@ impl CruxApp {
         let pane_id = PaneId(0);
         let weak_dock = dock_area.downgrade();
 
-        // Temporary self for helper method access during construction
-        let temp_self = Self {
-            dock_area: dock_area.clone(),
-            _socket_path: None,
-            ipc_cancel: None,
-            pane_registry: HashMap::new(),
-            next_pane_id: AtomicU64::new(1),
-            pane_events: VecDeque::new(),
-            pane_parents: HashMap::new(),
-            mcp_process: None,
-            config: config.clone(),
-        };
-        let initial_tab = temp_self.create_terminal_panel(pane_id, None, None, None, window, cx);
+        // Ensure CRUX_SOCKET is passed via env HashMap.
+        let mut initial_env = HashMap::new();
+        if let Ok(socket_path) = std::env::var("CRUX_SOCKET") {
+            initial_env.insert("CRUX_SOCKET".to_string(), socket_path);
+        }
+
+        let initial_tab = cx.new(|cx| {
+            CruxTerminalPanel::new(
+                pane_id,
+                None,
+                None,
+                Some(&initial_env),
+                config.font.clone(),
+                config.colors.clone(),
+                config.terminal.clone(),
+                window,
+                cx,
+            )
+        });
         pane_registry.insert(pane_id, initial_tab.clone());
 
         let dock_item = DockItem::tab(initial_tab, &weak_dock, window, cx);
@@ -192,12 +202,19 @@ impl CruxApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<CruxTerminalPanel> {
+        // Ensure CRUX_SOCKET is passed via env HashMap rather than relying solely
+        // on the process-wide environment variable.
+        let mut merged_env = env.cloned().unwrap_or_default();
+        if let Ok(socket_path) = std::env::var("CRUX_SOCKET") {
+            merged_env.entry("CRUX_SOCKET".to_string()).or_insert(socket_path);
+        }
+
         cx.new(|cx| {
             CruxTerminalPanel::new(
                 pane_id,
                 cwd,
                 command,
-                env,
+                Some(&merged_env),
                 self.config.font.clone(),
                 self.config.colors.clone(),
                 self.config.terminal.clone(),
@@ -214,9 +231,16 @@ impl CruxApp {
         result
     }
 
-    fn collect_tab_panels_recursive(item: &DockItem, out: &mut Vec<Entity<TabPanel>>, depth: usize) {
+    fn collect_tab_panels_recursive(
+        item: &DockItem,
+        out: &mut Vec<Entity<TabPanel>>,
+        depth: usize,
+    ) {
         if depth > MAX_DOCK_DEPTH {
-            log::warn!("collect_tab_panels_recursive: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
+            log::warn!(
+                "collect_tab_panels_recursive: max depth {} exceeded, stopping recursion",
+                MAX_DOCK_DEPTH
+            );
             return;
         }
         match item {
@@ -532,7 +556,10 @@ impl CruxApp {
     pub(crate) fn emit_pane_event(&mut self, event: PaneEvent) {
         const MAX_PANE_EVENTS: usize = 10_000;
         if self.pane_events.len() >= MAX_PANE_EVENTS {
-            log::warn!("pane event buffer full ({}), dropping oldest event", MAX_PANE_EVENTS);
+            log::warn!(
+                "pane event buffer full ({}), dropping oldest event",
+                MAX_PANE_EVENTS
+            );
             self.pane_events.pop_front();
         }
         self.pane_events.push_back(event);
@@ -649,7 +676,10 @@ impl CruxApp {
 
     fn collect_panes_from_dock_item_recursive(&mut self, item: &DockItem, cx: &App, depth: usize) {
         if depth > MAX_DOCK_DEPTH {
-            log::warn!("collect_panes_from_dock_item: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
+            log::warn!(
+                "collect_panes_from_dock_item: max depth {} exceeded, stopping recursion",
+                MAX_DOCK_DEPTH
+            );
             return;
         }
         match item {

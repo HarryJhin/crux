@@ -69,8 +69,14 @@ impl IpcClient {
 
     /// Send a JSON-RPC request and wait for the response.
     fn call_inner(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
-        let mut stream = self.stream.lock().map_err(|_| anyhow::anyhow!("IPC client mutex poisoned"))?;
-        let mut next_id = self.next_id.lock().map_err(|_| anyhow::anyhow!("IPC client mutex poisoned"))?;
+        let mut stream = self
+            .stream
+            .lock()
+            .map_err(|_| anyhow::anyhow!("IPC client mutex poisoned"))?;
+        let mut next_id = self
+            .next_id
+            .lock()
+            .map_err(|_| anyhow::anyhow!("IPC client mutex poisoned"))?;
         let id = *next_id;
         *next_id += 1;
 

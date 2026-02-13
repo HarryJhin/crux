@@ -24,8 +24,7 @@ fn make_kitty_delete_cmd() -> Vec<u8> {
 
 /// Build a Kitty command with many key-value pairs to stress the parser.
 fn make_kitty_complex_cmd() -> Vec<u8> {
-    b"a=T,f=32,s=200,v=150,i=42,p=7,c=20,r=10,x=5,y=5,w=100,h=75,z=-1,q=2,m=0;AAAA"
-        .to_vec()
+    b"a=T,f=32,s=200,v=150,i=42,p=7,c=20,r=10,x=5,y=5,w=100,h=75,z=-1,q=2,m=0;AAAA".to_vec()
 }
 
 fn bench_kitty_parse(c: &mut Criterion) {

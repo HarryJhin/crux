@@ -33,10 +33,11 @@ pub struct CruxTerminalView {
     pub(crate) focus_handle: FocusHandle,
     font: Font,
     font_size: Pixels,
+    /// TODO: Wire font_config into cell metrics calculation (font size, line height).
+    /// Currently font_size is hardcoded from config.font.size at initialization.
     #[allow(dead_code)]
     font_config: FontConfig,
-    #[allow(dead_code)]
-    color_config: ColorConfig,
+    pub(crate) color_config: ColorConfig,
     pub(crate) cell_width: Pixels,
     pub(crate) cell_height: Pixels,
     /// Origin of the terminal canvas in window coordinates, updated each render.
@@ -168,12 +169,19 @@ impl CruxTerminalView {
             None
         };
 
-        let terminal = match CruxTerminal::new(shell, size, cwd, command, Some(&merged_env)) {
+        let terminal = match CruxTerminal::new(
+            shell,
+            Some(&terminal_config.shell_args),
+            size,
+            cwd,
+            command,
+            Some(&merged_env),
+        ) {
             Ok(term) => term,
             Err(e) => {
                 log::error!("Failed to create terminal: {}. Using default shell.", e);
                 // Fall back to default shell without custom command
-                CruxTerminal::new(None, size, cwd, None, Some(&merged_env))
+                CruxTerminal::new(None, Some(&terminal_config.shell_args), size, cwd, None, Some(&merged_env))
                     .expect("Failed to create terminal even with default shell")
             }
         };
@@ -630,6 +638,14 @@ impl CruxTerminalView {
         let content = self.terminal.content();
         // Use shared helper from crux-terminal.
         crux_terminal::extract_text_lines(&content)
+    }
+
+    /// Get terminal grid content as text lines from an existing content snapshot.
+    ///
+    /// This avoids redundant FairMutex acquisition when the caller already has
+    /// a content snapshot.
+    pub fn get_text_lines_from_content(&self, content: &TerminalContent) -> Vec<String> {
+        crux_terminal::extract_text_lines(content)
     }
 
     /// Get the terminal size.
@@ -1163,6 +1179,7 @@ impl Render for CruxTerminalView {
                 bell_active,
                 cursor_visible,
                 marked_text,
+                color_config: self.color_config.clone(),
             }))
     }
 }

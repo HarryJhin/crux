@@ -34,21 +34,19 @@ pub fn register(cx: &mut App) {
             // 2. Refactor register_panel to accept config parameters
             // 3. Store config in PanelState during dump() and restore it here
             // For now, using defaults is acceptable for MVP.
-            Box::new(
-                cx.new(|cx| {
-                    CruxTerminalPanel::new(
-                        pane_id,
-                        cwd.as_deref(),
-                        None,
-                        None,
-                        FontConfig::default(),
-                        ColorConfig::default(),
-                        TerminalConfig::default(),
-                        window,
-                        cx,
-                    )
-                }),
-            )
+            Box::new(cx.new(|cx| {
+                CruxTerminalPanel::new(
+                    pane_id,
+                    cwd.as_deref(),
+                    None,
+                    None,
+                    FontConfig::default(),
+                    ColorConfig::default(),
+                    TerminalConfig::default(),
+                    window,
+                    cx,
+                )
+            }))
         },
     );
 }
@@ -86,7 +84,15 @@ impl CruxTerminalPanel {
         child_env.insert("TERM_PROGRAM".to_string(), "Crux".to_string());
 
         let terminal_view = cx.new(|cx| {
-            CruxTerminalView::new_with_options(cwd, command, Some(&child_env), font_config, color_config, terminal_config, cx)
+            CruxTerminalView::new_with_options(
+                cwd,
+                command,
+                Some(&child_env),
+                font_config,
+                color_config,
+                terminal_config,
+                cx,
+            )
         });
 
         // Focus the inner terminal view so key events reach the PTY.
@@ -143,10 +149,12 @@ impl CruxTerminalPanel {
     /// Get the terminal text content and cursor position.
     pub fn get_text(&self, cx: &App) -> (Vec<String>, u32, u32) {
         let view = self.terminal_view.read(cx);
-        // Single snapshot call to avoid double content() invocation.
+        // Single snapshot call to avoid double FairMutex acquisition.
         let content = view.terminal_content_snapshot();
 
-        let lines = view.get_text_lines();
+        // Extract text lines from the existing snapshot instead of calling get_text_lines(),
+        // which would acquire the FairMutex a second time.
+        let lines = view.get_text_lines_from_content(&content);
 
         (
             lines,
