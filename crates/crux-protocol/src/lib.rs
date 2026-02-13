@@ -735,16 +735,22 @@ mod tests {
 
     #[test]
     fn clipboard_read_result_tagged_union_serde() {
-        let text = ClipboardReadResult::Text { text: "hello".into() };
+        let text = ClipboardReadResult::Text {
+            text: "hello".into(),
+        };
         let json = serde_json::to_string(&text).unwrap();
         assert!(json.contains(r#""content_type":"text""#));
         assert!(json.contains(r#""text":"hello""#));
 
-        let image = ClipboardReadResult::Image { image_path: "/tmp/img.png".into() };
+        let image = ClipboardReadResult::Image {
+            image_path: "/tmp/img.png".into(),
+        };
         let json = serde_json::to_string(&image).unwrap();
         assert!(json.contains(r#""content_type":"image""#));
 
-        let files = ClipboardReadResult::FilePaths { paths: vec!["a.txt".into()] };
+        let files = ClipboardReadResult::FilePaths {
+            paths: vec!["a.txt".into()],
+        };
         let json = serde_json::to_string(&files).unwrap();
         assert!(json.contains(r#""content_type":"file_paths""#));
     }

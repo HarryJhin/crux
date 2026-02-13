@@ -778,15 +778,20 @@ impl CruxApp {
                                     }
                                     crux_clipboard::ClipboardContent::Image { png_data } => {
                                         match crux_clipboard::save_image_to_temp(&png_data) {
-                                            Ok(path) => Ok(crux_protocol::ClipboardReadResult::Image {
-                                                image_path: path.to_string_lossy().to_string(),
-                                            }),
+                                            Ok(path) => {
+                                                Ok(crux_protocol::ClipboardReadResult::Image {
+                                                    image_path: path.to_string_lossy().to_string(),
+                                                })
+                                            }
                                             Err(e) => Err(anyhow::anyhow!("{e}")),
                                         }
                                     }
                                     crux_clipboard::ClipboardContent::FilePaths(paths) => {
                                         Ok(crux_protocol::ClipboardReadResult::FilePaths {
-                                            paths: paths.iter().map(|p| p.to_string_lossy().to_string()).collect(),
+                                            paths: paths
+                                                .iter()
+                                                .map(|p| p.to_string_lossy().to_string())
+                                                .collect(),
                                         })
                                     }
                                 };
@@ -802,7 +807,9 @@ impl CruxApp {
                 #[cfg(not(target_os = "macos"))]
                 {
                     let _ = params;
-                    let _ = reply.send(Err(anyhow::anyhow!("clipboard not supported on this platform")));
+                    let _ = reply.send(Err(anyhow::anyhow!(
+                        "clipboard not supported on this platform"
+                    )));
                 }
             }
 
@@ -816,18 +823,24 @@ impl CruxApp {
                                     crux_clipboard::Clipboard::write_text(text, mtm)
                                         .map_err(|e| anyhow::anyhow!("{e}"))
                                 } else {
-                                    Err(anyhow::anyhow!("text field required for content_type 'text'"))
+                                    Err(anyhow::anyhow!(
+                                        "text field required for content_type 'text'"
+                                    ))
                                 }
                             }
                             "image" => {
                                 if let Some(path) = &params.image_path {
                                     match std::fs::read(path) {
-                                        Ok(data) => crux_clipboard::Clipboard::write_image(&data, mtm)
-                                            .map_err(|e| anyhow::anyhow!("{e}")),
+                                        Ok(data) => {
+                                            crux_clipboard::Clipboard::write_image(&data, mtm)
+                                                .map_err(|e| anyhow::anyhow!("{e}"))
+                                        }
                                         Err(e) => Err(anyhow::anyhow!("failed to read image: {e}")),
                                     }
                                 } else {
-                                    Err(anyhow::anyhow!("image_path field required for content_type 'image'"))
+                                    Err(anyhow::anyhow!(
+                                        "image_path field required for content_type 'image'"
+                                    ))
                                 }
                             }
                             other => Err(anyhow::anyhow!("unsupported content_type: {other}")),
@@ -840,25 +853,54 @@ impl CruxApp {
                 #[cfg(not(target_os = "macos"))]
                 {
                     let _ = params;
-                    let _ = reply.send(Err(anyhow::anyhow!("clipboard not supported on this platform")));
+                    let _ = reply.send(Err(anyhow::anyhow!(
+                        "clipboard not supported on this platform"
+                    )));
                 }
             }
 
             IpcCommand::ImeGetState { reply } => {
-                // Basic IME state. Full preedit text query deferred to Phase 5
-                // (requires adding a public accessor to CruxTerminalView).
+                let composing = self
+                    .active_pane_id(window, cx)
+                    .and_then(|id| self.pane_registry.get(&id))
+                    .map(|panel| panel.read(cx).is_composing(cx))
+                    .unwrap_or(false);
+
+                #[cfg(target_os = "macos")]
+                let input_source = crux_terminal_view::ime_switch::current_input_source();
+                #[cfg(not(target_os = "macos"))]
+                let input_source = None;
+
                 let state = crux_protocol::ImeStateResult {
-                    composing: false,
-                    preedit_text: None,
-                    input_source: None,
+                    composing,
+                    preedit_text: None, // Privacy: never expose composition text via IPC
+                    input_source,
                 };
                 let _ = reply.send(Ok(state));
             }
 
             IpcCommand::ImeSetInputSource { params, reply } => {
-                // IME source switching will be fully implemented in Phase 5.
-                let _ = params;
-                let _ = reply.send(Err(anyhow::anyhow!("IME source switching not yet implemented")));
+                #[cfg(target_os = "macos")]
+                {
+                    let success = crux_terminal_view::ime_switch::switch_to_input_source(
+                        &params.input_source,
+                    );
+                    if success {
+                        let _ = reply.send(Ok(()));
+                    } else {
+                        let _ = reply.send(Err(anyhow::anyhow!(
+                            "input source not found: {}",
+                            params.input_source
+                        )));
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = params;
+                    let _ = reply.send(Err(anyhow::anyhow!(
+                        "IME switching not supported on this platform"
+                    )));
+                }
             }
         }
     }

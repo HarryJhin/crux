@@ -21,6 +21,11 @@ extern "C" {
     fn CFArrayGetCount(array: *const c_void) -> isize;
     fn CFArrayGetValueAtIndex(array: *const c_void, idx: isize) -> *const c_void;
     fn CFStringGetCStringPtr(string: *const c_void, encoding: u32) -> *const std::ffi::c_char;
+    fn CFStringCreateWithCString(
+        alloc: *const c_void,
+        cstr: *const std::ffi::c_char,
+        encoding: u32,
+    ) -> *mut c_void;
     fn CFDictionaryCreate(
         allocator: *const c_void,
         keys: *const *const c_void,
@@ -61,7 +66,11 @@ pub fn current_input_source() -> Option<String> {
         let result = if !id_ref.is_null() {
             let cstr = CFStringGetCStringPtr(id_ref, K_CF_STRING_ENCODING_UTF8);
             if !cstr.is_null() {
-                Some(std::ffi::CStr::from_ptr(cstr).to_string_lossy().into_owned())
+                Some(
+                    std::ffi::CStr::from_ptr(cstr)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
             } else {
                 None
             }
@@ -127,5 +136,67 @@ pub fn switch_to_ascii() {
         }
 
         CFRelease(sources);
+    }
+}
+
+/// Switch to a specific input source by its identifier string.
+///
+/// Looks up the input source matching `source_id` (e.g.
+/// "com.apple.inputmethod.Korean.2SetKorean") and activates it.
+/// Returns `true` if the switch succeeded, `false` otherwise.
+pub fn switch_to_input_source(source_id: &str) -> bool {
+    use std::ffi::CString;
+
+    let Ok(c_source_id) = CString::new(source_id) else {
+        return false;
+    };
+
+    unsafe {
+        let cf_source_id = CFStringCreateWithCString(
+            kCFAllocatorDefault,
+            c_source_id.as_ptr(),
+            K_CF_STRING_ENCODING_UTF8,
+        );
+        if cf_source_id.is_null() {
+            return false;
+        }
+
+        // Build filter: { kTISPropertyInputSourceID: <source_id> }
+        let keys = [kTISPropertyInputSourceID];
+        let values = [cf_source_id as *const c_void];
+        let filter = CFDictionaryCreate(
+            kCFAllocatorDefault,
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            kCFTypeDictionaryKeyCallBacks,
+            kCFTypeDictionaryValueCallBacks,
+        );
+        CFRelease(cf_source_id as *const c_void);
+
+        if filter.is_null() {
+            return false;
+        }
+
+        let sources = TISCreateInputSourceList(filter, true);
+        CFRelease(filter as *const c_void);
+        if sources.is_null() {
+            return false;
+        }
+
+        let count = CFArrayGetCount(sources);
+        let success = if count > 0 {
+            let source = CFArrayGetValueAtIndex(sources, 0);
+            if !source.is_null() {
+                TISSelectInputSource(source as *mut c_void) == 0
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        CFRelease(sources);
+        success
     }
 }

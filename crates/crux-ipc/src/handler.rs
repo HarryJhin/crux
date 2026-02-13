@@ -260,7 +260,10 @@ async fn dispatch_request(
             .await
         }
         method::IME_GET_STATE => {
-            send_command(id.clone(), cmd_tx, |reply| IpcCommand::ImeGetState { reply }).await
+            send_command(id.clone(), cmd_tx, |reply| IpcCommand::ImeGetState {
+                reply,
+            })
+            .await
         }
         method::IME_SET_INPUT_SOURCE => {
             dispatch_with_params_unit(id.clone(), req.params, cmd_tx, |params, reply| {

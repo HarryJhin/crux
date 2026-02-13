@@ -110,6 +110,16 @@ impl CruxTerminalView {
         self.terminal.cwd()
     }
 
+    /// Returns whether IME is currently composing (has active preedit text).
+    pub fn is_composing(&self) -> bool {
+        self.marked_text.is_some()
+    }
+
+    /// Enable or disable Vim IME auto-switch (cursor shape triggers IME change).
+    pub fn set_vim_ime_switch(&mut self, enabled: bool) {
+        self.vim_ime_switch = enabled;
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self::new_with_options(None, None, None, cx)
     }
@@ -703,16 +713,26 @@ impl CruxTerminalView {
                 TerminalEvent::ClipboardSet { data } => {
                     cx.write_to_clipboard(ClipboardItem::new_string(data));
                 }
-                TerminalEvent::CursorShapeChanged { old_shape, new_shape } => {
+                TerminalEvent::CursorShapeChanged {
+                    old_shape,
+                    new_shape,
+                } => {
                     if self.vim_ime_switch {
                         use crux_terminal::CursorShape;
                         let entering_normal = matches!(new_shape, CursorShape::Block)
                             && !matches!(old_shape, CursorShape::Block);
+                        let leaving_normal = matches!(old_shape, CursorShape::Block)
+                            && !matches!(new_shape, CursorShape::Block);
                         if entering_normal {
                             #[cfg(target_os = "macos")]
                             {
                                 self.saved_input_source = crate::ime_switch::current_input_source();
                                 crate::ime_switch::switch_to_ascii();
+                            }
+                        } else if leaving_normal {
+                            #[cfg(target_os = "macos")]
+                            if let Some(ref source_id) = self.saved_input_source.take() {
+                                crate::ime_switch::switch_to_input_source(source_id);
                             }
                         }
                     }
@@ -1227,8 +1247,8 @@ impl Render for CruxTerminalView {
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::handle_mouse_up))
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
-            .on_drop(cx.listener(
-                |this: &mut Self, paths: &ExternalPaths, _window, _cx| {
+            .on_drop(
+                cx.listener(|this: &mut Self, paths: &ExternalPaths, _window, _cx| {
                     let escaped: Vec<String> = paths
                         .paths()
                         .iter()
@@ -1236,8 +1256,8 @@ impl Render for CruxTerminalView {
                         .collect();
                     let text = escaped.join(" ");
                     this.write_to_pty_with_bracketed_paste(text.as_bytes());
-                },
-            ))
+                }),
+            )
             .drag_over::<ExternalPaths>(|style, _, _, _| {
                 style.border_2().border_color(Hsla {
                     h: 0.58,

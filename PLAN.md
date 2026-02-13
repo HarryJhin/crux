@@ -375,82 +375,86 @@ A multi-pane terminal where:
 
 ### 3.1 NSTextInputClient Implementation
 
-- [ ] Implement full `NSTextInputClient` protocol via `objc2-app-kit`
-- [ ] `insertText:replacementRange:` -- commit text to PTY
-- [ ] `setMarkedText:selectedRange:replacementRange:` -- store preedit overlay (NOT sent to PTY)
-- [ ] `unmarkText` -- commit marked text
-- [ ] `hasMarkedText`, `markedRange`, `selectedRange` -- state queries
-- [ ] `firstRectForCharacterRange:actualRange:` -- cell coord -> view coord -> window coord -> screen coord
-- [ ] `doCommandBySelector:` -- handle insertNewline, deleteBackward, insertTab
-- [ ] `validAttributesForMarkedText` -- return empty array
-- [ ] `characterIndexForPoint:` -- screen coord to cell position
+> **Note**: Implemented via GPUI's `EntityInputHandler` trait (Rust abstraction wrapping `NSTextInputClient`) rather than raw `objc2-app-kit` bindings. Architecturally superior — avoids unsafe Objective-C bridging.
+
+- [x] Implement full `NSTextInputClient` protocol via GPUI `EntityInputHandler`
+- [x] `insertText:replacementRange:` -- commit text to PTY (`replace_text_in_range`)
+- [x] `setMarkedText:selectedRange:replacementRange:` -- store preedit overlay (`replace_and_mark_text_in_range`)
+- [x] `unmarkText` -- commit marked text
+- [x] `hasMarkedText`, `markedRange`, `selectedRange` -- state queries
+- [x] `firstRectForCharacterRange:actualRange:` -- cell coord -> view coord -> window coord -> screen coord (`bounds_for_range`)
+- [x] `doCommandBySelector:` -- handled by GPUI key dispatch + `handle_key_down` routing
+- [x] `validAttributesForMarkedText` -- handled internally by GPUI
+- [x] `characterIndexForPoint:` -- screen coord to cell position
 
 ### 3.2 Composition Overlay Rendering
 
-- [ ] Preedit text rendered as overlay on terminal grid
-- [ ] Underline style for composition text
-- [ ] Distinct color for composing vs committed text
-- [ ] Correct overlay positioning for wide (CJK) characters
-- [ ] Overlay cleanup on composition cancel/commit
+- [x] Preedit text rendered as overlay on terminal grid
+- [x] Underline style for composition text
+- [x] Distinct color for composing vs committed text (light blue background)
+- [x] Correct overlay positioning for wide (CJK) characters
+- [x] Overlay cleanup on composition cancel/commit
 
 ### 3.3 Korean IME Hardening
 
 Based on failure analysis of Alacritty, Ghostty, WezTerm:
 
-- [ ] **Modifier key isolation**: Ignore standalone Ctrl/Shift/Cmd during `hasMarkedText`
+- [x] **Modifier key isolation**: Ignore standalone Ctrl/Shift/Cmd during `hasMarkedText`
   - Prevents Ghostty-style preedit destruction (#4634)
-- [ ] **Event deduplication**: Filter duplicate space/text from IME commit + keyboard event
+- [x] **Event deduplication**: Filter duplicate space/text from IME commit + keyboard event
   - Prevents Alacritty-style double space (#8079)
   - Window: 10ms dedup window for identical text
-- [ ] **IME crash resilience**: Timeout on IME event processing (100ms)
+- [x] **IME crash resilience**: Timeout on IME event processing (5s stale composition force-commit)
   - Prevents Alacritty-style freeze (#4469)
   - Reset IME state on timeout
-- [ ] **NFD normalization**: Convert decomposed Hangul (NFD) to composed (NFC) before rendering
-- [ ] **Wide character cursor**: Correct cursor positioning after 2-cell CJK characters
+- [x] **NFD normalization**: Convert decomposed Hangul (NFD) to composed (NFC) before rendering
+- [x] **Wide character cursor**: Correct cursor positioning after 2-cell CJK characters
 
 ### 3.4 Rich Clipboard (crux-clipboard)
 
-- [ ] NSPasteboard content type detection (text, HTML, image, file URL)
-- [ ] Image paste (Cmd+V):
+- [x] NSPasteboard content type detection (text, HTML, image, file URL)
+- [x] Image paste (Cmd+V):
   - Read PNG/TIFF from pasteboard
   - Convert TIFF to PNG if needed
-  - Save to `/tmp/crux-clipboard/paste-{timestamp}.png`
-  - Transmit file path to application via sideband (not PTY text stream)
-- [ ] `clipboard-rs` integration for cross-platform clipboard API
-- [ ] Direct `objc2-app-kit` NSPasteboard access for image data
+  - Save to secure temp directory with restrictive permissions (0o700)
+  - Transmit file path to application via bracketed paste
+- [x] Direct `objc2-app-kit` NSPasteboard access for image data
+  - `clipboard-rs` not used; direct `objc2-app-kit` chosen (macOS-only project, no cross-platform need)
 
 ### 3.5 Drag & Drop
 
-- [ ] Register `NSView` for drag types: fileURL, PNG, TIFF, string
-- [ ] `NSDraggingDestination` protocol implementation
-- [ ] File drop: insert file path as text into PTY
-- [ ] Image drop: save to temp file, handle like clipboard image
-- [ ] Visual drop indicator (highlight pane border)
+- [x] Register for drag types via GPUI's built-in `on_drop`/`drag_over` API
+  - GPUI handles `NSDraggingDestination` internally
+- [x] File drop: insert file path as text into PTY (shell-escaped, bracketed paste)
+- [ ] Image drop: save to temp file, handle like clipboard image (deferred -- requires NSView subclassing beyond GPUI's `ExternalPaths` API)
+- [x] Visual drop indicator (highlight pane border -- blue border)
 
 ### 3.6 Crux Protocol -- Clipboard & IME (P1)
 
-- [ ] `crux:clipboard/read` -- read clipboard with type preference
-- [ ] `crux:clipboard/write` -- write text/HTML/image to clipboard
-- [ ] `crux:ime/get-state` -- query IME composition state
-- [ ] `crux:ime/set-input-source` -- switch input method programmatically
-- [ ] `crux:events/subscribe` -- pane events, focus events
+- [x] `crux:clipboard/read` -- read clipboard with type preference
+- [x] `crux:clipboard/write` -- write text/HTML/image to clipboard
+- [x] `crux:ime/get-state` -- query IME composition state (real data from terminal view)
+- [x] `crux:ime/set-input-source` -- switch input method programmatically (via Carbon TIS FFI)
+- [ ] `crux:events/subscribe` -- pane events, focus events (deferred -- requires IPC architecture change for push notifications; protocol types defined, event buffer in place)
 
 ### 3.7 Vim Mode IME Auto-Switch
 
-- [ ] Detect cursor shape change escape sequences from PTY output:
+- [x] Detect cursor shape change escape sequences from PTY output:
   - `\e[2 q` (block) = Normal mode -> switch to ASCII
   - `\e[6 q` (bar) = Insert mode -> restore previous IME
-- [ ] `TISSelectInputSource` API for programmatic IME switching
-- [ ] User-configurable enable/disable
+- [x] `TISSelectInputSource` API for programmatic IME switching
+  - `switch_to_ascii()` + `switch_to_input_source()` in `ime_switch.rs`
+- [x] Public setter `set_vim_ime_switch()` for enable/disable
+  - Full config system integration deferred to Phase 5
 
 ### Milestone 3 Deliverable
 
-- Korean input works flawlessly
-- IME candidate window appears at correct cursor position
-- No freezing, no double spaces, no preedit destruction
-- Cmd+V pastes images as temp file paths for Claude Code
-- Drag & drop files/images into terminal
-- Vim users can type Korean in Insert mode with auto-switch in Normal mode
+- [x] Korean input works flawlessly
+- [x] IME candidate window appears at correct cursor position
+- [x] No freezing, no double spaces, no preedit destruction
+- [x] Cmd+V pastes images as temp file paths for Claude Code
+- [x] Drag & drop files into terminal (image drop deferred)
+- [x] Vim users can type Korean in Insert mode with auto-switch in Normal mode
 
 ---
 

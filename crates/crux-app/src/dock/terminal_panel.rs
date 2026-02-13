@@ -89,6 +89,11 @@ impl CruxTerminalPanel {
         &self.terminal_view
     }
 
+    /// Returns whether IME is currently composing (has active preedit text).
+    pub fn is_composing(&self, cx: &App) -> bool {
+        self.terminal_view.read(cx).is_composing()
+    }
+
     /// Get the terminal size as (rows, cols).
     pub fn terminal_view_size(&self, cx: &App) -> (u32, u32) {
         let view = self.terminal_view.read(cx);
