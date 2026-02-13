@@ -12,19 +12,8 @@ use crux_terminal::{
 };
 
 use crate::element::render_terminal_canvas;
-use crate::input;
 use crate::input::OptionAsAlt;
 use crate::mouse;
-
-/// Strip dangerous control characters from clipboard text before pasting.
-///
-/// Allows newline, tab, and carriage return but strips all other
-/// C0/C1 control characters (including ESC) to prevent ANSI injection attacks.
-fn sanitize_paste_text(text: &str) -> String {
-    text.chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t' || *c == '\r')
-        .collect()
-}
 
 const FONT_FAMILY: &str = "Menlo";
 const FONT_SIZE: f32 = 14.0;
@@ -38,18 +27,18 @@ const SCROLL_LINES_PER_TICK: i32 = 3;
 /// Window for IME event deduplication. Identical insertText: calls within
 /// this interval are treated as duplicates (prevents the double-space bug
 /// observed in some CJK input methods).
-const IME_DEDUP_WINDOW: Duration = Duration::from_millis(10);
+pub(crate) const IME_DEDUP_WINDOW: Duration = Duration::from_millis(10);
 
 /// GPUI View wrapping a terminal emulator with keyboard input and rendering.
 pub struct CruxTerminalView {
-    terminal: CruxTerminal,
-    focus_handle: FocusHandle,
+    pub(crate) terminal: CruxTerminal,
+    pub(crate) focus_handle: FocusHandle,
     font: Font,
     font_size: Pixels,
-    cell_width: Pixels,
-    cell_height: Pixels,
+    pub(crate) cell_width: Pixels,
+    pub(crate) cell_height: Pixels,
     /// Origin of the terminal canvas in window coordinates, updated each render.
-    canvas_origin: Point2D<Pixels>,
+    pub(crate) canvas_origin: Point2D<Pixels>,
     /// The last title reported by the terminal via OSC.
     title: Option<String>,
     /// Instant when the bell last fired; used for visual flash.
@@ -67,16 +56,16 @@ pub struct CruxTerminalView {
     /// Whether the terminal view is currently focused.
     is_focused: bool,
     /// Whether the macOS Option key should be treated as Alt.
-    option_as_alt: OptionAsAlt,
+    pub(crate) option_as_alt: OptionAsAlt,
     /// Last reported mouse grid position, for motion event deduplication.
     last_mouse_grid: Option<Point>,
     /// IME composition (preedit) text, displayed as overlay at cursor position.
     /// Set by `replace_and_mark_text_in_range`, cleared on commit or `unmark_text`.
-    marked_text: Option<String>,
+    pub(crate) marked_text: Option<String>,
     /// Selected range within composition text (UTF-16 offsets from IME).
-    marked_text_selected_range: Option<Range<usize>>,
+    pub(crate) marked_text_selected_range: Option<Range<usize>>,
     /// Last IME commit for deduplication (text, timestamp). Prevents double-space bug (Alacritty #8079).
-    last_ime_commit: Option<(String, Instant)>,
+    pub(crate) last_ime_commit: Option<(String, Instant)>,
     /// Synthetic text buffer for IME recombination.
     ///
     /// Korean/CJK input methods call `attributedSubstringForProposedRange:`
@@ -87,9 +76,9 @@ pub struct CruxTerminalView {
     /// `replacementRange` in `setMarkedText:` to replace previous characters.
     ///
     /// Cleared when the user presses Enter, arrow keys, or other non-text keys.
-    ime_buffer: String,
+    pub(crate) ime_buffer: String,
     /// Timestamp when IME composition started, for stale preedit detection.
-    marked_text_timestamp: Option<Instant>,
+    pub(crate) marked_text_timestamp: Option<Instant>,
     /// Whether Vim IME auto-switch is enabled.
     vim_ime_switch: bool,
     /// The input source that was active before switching to ASCII.
@@ -241,164 +230,6 @@ impl CruxTerminalView {
                 cell_height: f32::from(self.cell_height),
             });
         }
-    }
-
-    fn handle_key_down(
-        &mut self,
-        event: &KeyDownEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Reset cursor blink on any key input.
-        self.reset_cursor_blink();
-
-        // HARDENING 1: Modifier Key Isolation (Ghostty #4634)
-        // When composing, ignore standalone modifier keys (Ctrl, Shift, Cmd, Option alone).
-        // These must NOT destroy the preedit.
-        if self.marked_text.is_some() && Self::is_standalone_modifier(&event.keystroke) {
-            return; // Ignore modifier-only keystrokes during composition.
-        }
-
-        // Handle Cmd+V for paste before forwarding to terminal.
-        if event.keystroke.modifiers.platform && event.keystroke.key.as_str() == "v" {
-            self.paste_from_clipboard(cx);
-            cx.stop_propagation();
-            return;
-        }
-
-        // Handle Cmd+C for copy before forwarding to terminal.
-        if event.keystroke.modifiers.platform && event.keystroke.key.as_str() == "c" {
-            self.copy_selection(_window, cx);
-            cx.stop_propagation();
-            return;
-        }
-
-        // Handle Cmd+A for select all.
-        if event.keystroke.modifiers.platform && event.keystroke.key.as_str() == "a" {
-            self.select_all();
-            cx.notify();
-            cx.stop_propagation();
-            return;
-        }
-
-        // HARDENING 2: Event Deduplication (Alacritty #8079)
-        // If keystroke matches recent IME commit within dedup window, drop it.
-        if let Some((ref last_text, last_time)) = self.last_ime_commit {
-            if last_time.elapsed() < IME_DEDUP_WINDOW && event.keystroke.key == last_text.as_str() {
-                // This keystroke is a duplicate of the IME commit. Drop it.
-                cx.stop_propagation();
-                return;
-            }
-        }
-
-        // Character keys without special modifiers → let IME handle via
-        // replace_text_in_range(). This avoids double-processing: if we wrote
-        // to the PTY here, the IME would also write via insertText:.
-        if Self::is_ime_candidate(&event.keystroke, self.option_as_alt) {
-            log::debug!(
-                "[IME] is_ime_candidate=true, letting key '{}' pass to IME",
-                event.keystroke.key,
-            );
-            return; // Don't stop propagation — let event reach IME.
-        }
-
-        // Get the current terminal mode for application cursor key detection.
-        let mode = self.terminal.content().mode;
-
-        log::debug!(
-            "[IME] key '{}' NOT ime_candidate, sending to PTY directly",
-            event.keystroke.key,
-        );
-
-        if let Some(bytes) = input::keystroke_to_bytes(&event.keystroke, mode, self.option_as_alt) {
-            // Non-IME keys (arrows, enter, etc.) invalidate the IME buffer
-            // since the cursor position in the shell has changed.
-            self.ime_buffer.clear();
-            // Clear selection when typing.
-            self.terminal.with_term_mut(|term| {
-                term.selection = None;
-            });
-            self.terminal.write_to_pty(&bytes);
-            cx.stop_propagation();
-            cx.notify();
-        }
-    }
-
-    /// Trim the IME buffer to a reasonable size.
-    /// Only the last few characters are needed for Korean recombination.
-    fn trim_ime_buffer(&mut self) {
-        const MAX_IME_BUFFER_CHARS: usize = 8;
-        let char_count = self.ime_buffer.chars().count();
-        if char_count > MAX_IME_BUFFER_CHARS {
-            let skip = char_count - MAX_IME_BUFFER_CHARS;
-            let byte_offset = self
-                .ime_buffer
-                .char_indices()
-                .nth(skip)
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            self.ime_buffer.drain(..byte_offset);
-        }
-    }
-
-    /// Returns true if the keystroke is a standalone modifier key (no character).
-    /// Used to prevent modifiers from destroying IME composition (Ghostty #4634).
-    fn is_standalone_modifier(keystroke: &Keystroke) -> bool {
-        matches!(
-            keystroke.key.as_str(),
-            "shift" | "control" | "alt" | "cmd" | "option" | "command"
-        )
-    }
-
-    /// Returns true if the keystroke should be handled by IME rather than directly.
-    ///
-    /// Character keys without Ctrl/Alt/Cmd/Fn modifiers go through the IME pipeline
-    /// so that composition (e.g. Korean jamo assembly) works correctly.
-    fn is_ime_candidate(keystroke: &Keystroke, option_as_alt: OptionAsAlt) -> bool {
-        if keystroke.modifiers.platform
-            || keystroke.modifiers.control
-            || keystroke.modifiers.function
-        {
-            return false;
-        }
-        // Alt+key sends ESC prefix when option_as_alt is enabled — bypass IME.
-        if keystroke.modifiers.alt {
-            match option_as_alt {
-                OptionAsAlt::None => {} // macOS special char; let IME handle.
-                _ => return false,      // Terminal Alt behavior; handle directly.
-            }
-        }
-        // Named terminal control keys produce escape sequences, not character input.
-        !matches!(
-            keystroke.key.as_str(),
-            "enter"
-                | "tab"
-                | "backspace"
-                | "escape"
-                | "space"
-                | "up"
-                | "down"
-                | "left"
-                | "right"
-                | "home"
-                | "end"
-                | "insert"
-                | "delete"
-                | "pageup"
-                | "pagedown"
-                | "f1"
-                | "f2"
-                | "f3"
-                | "f4"
-                | "f5"
-                | "f6"
-                | "f7"
-                | "f8"
-                | "f9"
-                | "f10"
-                | "f11"
-                | "f12"
-        )
     }
 
     /// Convert pixel position relative to canvas origin into terminal grid coordinates.
@@ -618,63 +449,9 @@ impl CruxTerminalView {
     }
 
     /// Copy the current selection to the system clipboard.
-    fn copy_selection(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn copy_selection(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.terminal.selection_to_string() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
-        }
-    }
-
-    /// Paste content from the system clipboard into the terminal.
-    ///
-    /// Checks NSPasteboard for rich content (images, file paths) first,
-    /// then falls back to GPUI's text-only clipboard API.
-    fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) {
-        // Try rich clipboard (images, file paths) via NSPasteboard.
-        #[cfg(target_os = "macos")]
-        if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
-            if let Ok(content) = crux_clipboard::Clipboard::read(mtm) {
-                match content {
-                    crux_clipboard::ClipboardContent::Image { png_data } => {
-                        if let Ok(path) = crux_clipboard::save_image_to_temp(&png_data) {
-                            let path_str = path.to_string_lossy().to_string();
-                            self.write_to_pty_with_bracketed_paste(path_str.as_bytes());
-                            return;
-                        }
-                    }
-                    crux_clipboard::ClipboardContent::FilePaths(paths) => {
-                        let text = paths
-                            .iter()
-                            .map(|p| shell_escape::escape(p.to_string_lossy()).to_string())
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        self.write_to_pty_with_bracketed_paste(text.as_bytes());
-                        return;
-                    }
-                    _ => {} // Fall through to text paste below.
-                }
-            }
-        }
-
-        // Default: text paste via GPUI clipboard API.
-        if let Some(item) = cx.read_from_clipboard() {
-            if let Some(text) = item.text() {
-                if !text.is_empty() {
-                    let sanitized = sanitize_paste_text(&text);
-                    self.write_to_pty_with_bracketed_paste(sanitized.as_bytes());
-                }
-            }
-        }
-    }
-
-    /// Write data to PTY, wrapping in bracketed paste mode if enabled.
-    fn write_to_pty_with_bracketed_paste(&mut self, data: &[u8]) {
-        let mode = self.terminal.content().mode;
-        if mode.contains(TermMode::BRACKETED_PASTE) {
-            self.terminal.write_to_pty(b"\x1b[200~");
-            self.terminal.write_to_pty(data);
-            self.terminal.write_to_pty(b"\x1b[201~");
-        } else {
-            self.terminal.write_to_pty(data);
         }
     }
 
@@ -766,13 +543,13 @@ impl CruxTerminalView {
     }
 
     /// Reset cursor blink to visible state (called on user input or click).
-    fn reset_cursor_blink(&mut self) {
+    pub(crate) fn reset_cursor_blink(&mut self) {
         self.cursor_blink_visible = true;
         self.cursor_blink_epoch = Instant::now();
     }
 
     /// Select all terminal content (screen + scrollback).
-    fn select_all(&mut self) {
+    pub(crate) fn select_all(&mut self) {
         self.terminal.with_term_mut(|term| {
             let start = Point::new(term.grid().topmost_line(), Column(0));
             let end = Point::new(

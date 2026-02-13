@@ -2,6 +2,7 @@ mod actions;
 mod app;
 mod cli;
 mod dock;
+mod ipc_dispatch;
 
 use clap::Parser;
 use gpui::*;

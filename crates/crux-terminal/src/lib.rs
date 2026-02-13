@@ -5,6 +5,7 @@
 //! any UI framework (GPUI in our case).
 
 pub mod event;
+pub(crate) mod osc_scanner;
 pub mod pty;
 pub mod terminal;
 

@@ -1,9 +1,11 @@
 //! GPUI rendering for the terminal: View, Element (canvas-based), cursor, color mapping.
 
+mod clipboard_handler;
 mod colors;
 mod element;
 pub mod ime_switch;
 mod input;
+mod keyboard;
 mod mouse;
 mod view;
 
