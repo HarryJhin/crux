@@ -25,6 +25,10 @@ pub enum ClipboardError {
     WriteFailed,
     #[error("file path reading not yet implemented")]
     NotImplemented,
+    #[error("failed to decode image: {0}")]
+    ImageDecode(String),
+    #[error("failed to encode image: {0}")]
+    ImageEncode(String),
 }
 
 /// Represents the different types of content that can be stored in the clipboard.
@@ -38,6 +42,28 @@ pub enum ClipboardContent {
     Image { png_data: Vec<u8> },
     /// List of file paths
     FilePaths(Vec<PathBuf>),
+}
+
+/// Convert TIFF image data to PNG format.
+///
+/// macOS screenshots and pasteboard images are often in TIFF format.
+/// This converts them to PNG for broader compatibility.
+fn tiff_to_png(tiff_data: &[u8]) -> Result<Vec<u8>, ClipboardError> {
+    let img =
+        image::load_from_memory_with_format(tiff_data, image::ImageFormat::Tiff).map_err(|e| {
+            log::warn!("TIFF decode failed: {e}");
+            ClipboardError::ImageDecode(e.to_string())
+        })?;
+    let mut png_buf = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut png_buf),
+        image::ImageFormat::Png,
+    )
+    .map_err(|e| {
+        log::warn!("PNG encode failed: {e}");
+        ClipboardError::ImageEncode(e.to_string())
+    })?;
+    Ok(png_buf)
 }
 
 /// Main clipboard interface for reading and writing to NSPasteboard.
@@ -128,8 +154,7 @@ impl Clipboard {
         let ns_string = NSString::from_str(text);
 
         // SAFETY: setString_forType writes a valid NSString with a valid type key.
-        let success =
-            unsafe { pasteboard.setString_forType(&ns_string, NSPasteboardTypeString) };
+        let success = unsafe { pasteboard.setString_forType(&ns_string, NSPasteboardTypeString) };
 
         if success {
             Ok(())
@@ -149,8 +174,7 @@ impl Clipboard {
         let ns_data = NSData::with_bytes(png_data);
 
         // SAFETY: setData_forType writes valid NSData with a valid type key.
-        let success =
-            unsafe { pasteboard.setData_forType(Some(&ns_data), NSPasteboardTypePNG) };
+        let success = unsafe { pasteboard.setData_forType(Some(&ns_data), NSPasteboardTypePNG) };
 
         if success {
             Ok(())
@@ -188,30 +212,35 @@ impl Clipboard {
     }
 
     fn read_image_internal(pasteboard: &NSPasteboard) -> Result<Vec<u8>, ClipboardError> {
-        // Try PNG first
-        // SAFETY: dataForType with a valid type key returns an autoreleased optional NSData.
+        // Try PNG first — return as-is.
         if let Some(data) = unsafe { pasteboard.dataForType(NSPasteboardTypePNG) } {
             return Ok(data.bytes().to_vec());
         }
 
-        // Fall back to TIFF
-        // SAFETY: dataForType with a valid type key returns an autoreleased optional NSData.
+        // Fall back to TIFF and convert to PNG.
         if let Some(data) = unsafe { pasteboard.dataForType(NSPasteboardTypeTIFF) } {
-            return Ok(data.bytes().to_vec());
+            return tiff_to_png(data.bytes());
         }
 
         Err(ClipboardError::NoImage)
     }
 
-    fn read_file_paths_internal(
-        _pasteboard: &NSPasteboard,
-    ) -> Result<Vec<PathBuf>, ClipboardError> {
-        // Note: Reading file URLs from NSPasteboard requires using readObjectsForClasses_options
-        // with proper type casting, which is complex with objc2 0.2.x API.
-        // For Phase 3, we'll focus on text and image support first.
-        // This can be implemented later with a more robust approach using NSFilePromiseReceiver
-        // or by upgrading to objc2 0.5+ which has better typed array support.
-        Err(ClipboardError::NotImplemented)
+    fn read_file_paths_internal(pasteboard: &NSPasteboard) -> Result<Vec<PathBuf>, ClipboardError> {
+        // Read file URL string from pasteboard.
+        let file_url_type = unsafe { NSPasteboardTypeFileURL };
+        let data = unsafe { pasteboard.stringForType(file_url_type) };
+        if let Some(url_string) = data {
+            let url_str = url_string.to_string();
+            // File URLs are percent-encoded: file:///path/to/file
+            if let Ok(url) = url::Url::parse(&url_str) {
+                if let Ok(path) = url.to_file_path() {
+                    return Ok(vec![path]);
+                }
+            }
+            // Fallback: treat as a plain path.
+            return Ok(vec![PathBuf::from(url_str)]);
+        }
+        Err(ClipboardError::NoSupportedContent)
     }
 
     fn contains_type(types: &NSArray<NSString>, type_str: &NSString) -> bool {
@@ -221,6 +250,52 @@ impl Clipboard {
             unsafe { types.objectAtIndex(i).isEqualToString(type_str) }
         })
     }
+}
+
+/// Save clipboard image to a temp file and return the path.
+///
+/// Uses `$TMPDIR/crux-clipboard/` with 0700 permissions to prevent symlink attacks.
+/// File names include PID + atomic counter + timestamp for collision prevention.
+/// Files are created with `create_new` (O_EXCL) to prevent TOCTOU races.
+pub fn save_image_to_temp(png_data: &[u8]) -> Result<std::path::PathBuf, ClipboardError> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let dir = std::env::temp_dir().join("crux-clipboard");
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        log::warn!("failed to create temp dir: {e}");
+        ClipboardError::WriteFailed
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|_| ClipboardError::WriteFailed)?;
+    }
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let pid = std::process::id();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let path = dir.join(format!("paste-{pid}-{timestamp}-{seq}.png"));
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| {
+            log::warn!("failed to create temp file: {e}");
+            ClipboardError::WriteFailed
+        })?;
+    file.write_all(png_data).map_err(|e| {
+        log::warn!("failed to write temp file: {e}");
+        ClipboardError::WriteFailed
+    })?;
+
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -278,6 +353,45 @@ mod tests {
             ClipboardError::NotImplemented.to_string(),
             "file path reading not yet implemented"
         );
+    }
+
+    #[test]
+    fn test_save_image_to_temp() {
+        // Minimal valid PNG: 8-byte signature + IHDR + IEND
+        let png_data = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+        ];
+        let result = save_image_to_temp(&png_data);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.exists());
+        assert!(path.to_string_lossy().contains("crux-clipboard"));
+        assert!(path.to_string_lossy().ends_with(".png"));
+        // Verify content
+        let content = std::fs::read(&path).unwrap();
+        assert_eq!(content, png_data);
+        // Clean up
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn test_save_image_to_temp_unique_names() {
+        let data1 = vec![1, 2, 3];
+        let data2 = vec![4, 5, 6];
+        let path1 = save_image_to_temp(&data1).unwrap();
+        let path2 = save_image_to_temp(&data2).unwrap();
+        assert_ne!(path1, path2);
+        // Clean up
+        std::fs::remove_file(path1).ok();
+        std::fs::remove_file(path2).ok();
+    }
+
+    #[test]
+    fn test_new_error_variants() {
+        let err = ClipboardError::ImageDecode("bad format".to_string());
+        assert_eq!(err.to_string(), "failed to decode image: bad format");
+        let err = ClipboardError::ImageEncode("write error".to_string());
+        assert_eq!(err.to_string(), "failed to encode image: write error");
     }
 
     // Note: Testing actual NSPasteboard operations requires a macOS runtime environment

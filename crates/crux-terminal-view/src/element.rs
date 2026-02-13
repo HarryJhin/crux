@@ -336,10 +336,7 @@ pub fn render_terminal_canvas(
                     CursorShape::Underline => {
                         let underline_y = cx_pos.y + cell_height - px(2.0);
                         Some(fill(
-                            Bounds::new(
-                                point(cx_pos.x, underline_y),
-                                size(cursor_width, px(2.0)),
-                            ),
+                            Bounds::new(point(cx_pos.x, underline_y), size(cursor_width, px(2.0))),
                             cursor_color,
                         ))
                     }

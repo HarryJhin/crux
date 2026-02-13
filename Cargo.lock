@@ -1420,6 +1420,7 @@ dependencies = [
  "anyhow",
  "clap",
  "core-text",
+ "crux-clipboard",
  "crux-ipc",
  "crux-protocol",
  "crux-terminal-view",
@@ -1437,11 +1438,13 @@ dependencies = [
 name = "crux-clipboard"
 version = "0.1.0"
 dependencies = [
+ "image",
  "log",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
  "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]
@@ -1502,9 +1505,12 @@ name = "crux-terminal-view"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "crux-clipboard",
  "crux-terminal",
  "gpui",
  "log",
+ "objc2-foundation 0.2.2",
+ "shell-escape",
  "unicode-normalization",
 ]
 
@@ -5826,6 +5832,12 @@ dependencies = [
  "lazy_static",
  "libc",
 ]
+
+[[package]]
+name = "shell-escape"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45bb67a18fa91266cc7807181f62f9178a6873bfad7dc788c42e6430db40184f"
 
 [[package]]
 name = "shell-words"

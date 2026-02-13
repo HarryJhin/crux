@@ -11,8 +11,13 @@ doctest = false
 [dependencies]
 gpui.workspace = true
 crux-terminal.workspace = true
+crux-clipboard.workspace = true
 log.workspace = true
 unicode-normalization.workspace = true
+shell-escape.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.2", features = ["NSThread"] }
 
 [dev-dependencies]
 alacritty_terminal.workspace = true

@@ -57,6 +57,8 @@ pub enum TerminalEvent {
         /// and for D markers that omit the exit code.
         exit_code: Option<i32>,
     },
+    /// Program requested clipboard write via OSC 52.
+    ClipboardSet { data: String },
 }
 
 /// Bridges alacritty_terminal events into our channel-based system.
@@ -86,8 +88,7 @@ impl EventListener for CruxEventListener {
                 Some(TerminalEvent::PtyWrite(color_str))
             }
             AlacEvent::ClipboardStore(_, content) => {
-                log::debug!("clipboard store request: {} bytes", content.len());
-                None
+                Some(TerminalEvent::ClipboardSet { data: content })
             }
             AlacEvent::ClipboardLoad(_, format_fn) => {
                 // Return empty string to prevent hangs from unanswered requests.
@@ -218,5 +219,17 @@ mod tests {
         assert_eq!(SemanticZoneType::Input, SemanticZoneType::Input);
         assert_eq!(SemanticZoneType::Output, SemanticZoneType::Output);
         assert_ne!(SemanticZoneType::Prompt, SemanticZoneType::Input);
+    }
+
+    #[test]
+    fn test_clipboard_set_event() {
+        let (tx, rx) = mpsc::channel();
+        let listener = CruxEventListener::new(tx);
+        listener.send_event(AlacEvent::ClipboardStore(
+            alacritty_terminal::term::ClipboardType::Clipboard,
+            "test data".to_string(),
+        ));
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, TerminalEvent::ClipboardSet { data } if data == "test data"));
     }
 }

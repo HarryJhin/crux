@@ -22,3 +22,5 @@ objc2-app-kit = { version = "0.2", features = [
     "NSPasteboard",
     "NSImage",
 ] }
+image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
+url = "2"

@@ -10,6 +10,19 @@
 
 Phase 3 has **6 work items** (3.A-3.F). Critical finding: **most of PLAN.md section 3.1-3.3 is already implemented**. GPUI handles NSTextInputClient natively; Crux's `CruxTerminalView` already implements all 7 `EntityInputHandler` methods with Korean IME hardening (modifier isolation, event dedup, NFC normalization, composition overlay). The remaining work focuses on a small cursor bug fix, rich clipboard integration, drag-and-drop, IPC protocol extensions, and Vim IME auto-switch.
 
+### Review Findings (2026-02-13)
+
+4명의 전문 리뷰어(아키텍처/보안/API/코드)가 본 계획을 검토한 결과:
+
+| 리뷰 | 점수 | 핵심 발견 |
+|------|------|----------|
+| 아키텍처 | 4.5/5 | CursorShapeChanged 이벤트 발행 방식 명확화 필요 |
+| 보안 | 3/5 | CRITICAL 3건 (임시파일, OSC 52, IPC 인증) |
+| API 설계 | 3.5/5 | ClipboardReadResult tagged union 재설계 필요 |
+| 코드 품질 | 4/5 | GPUI API 확인됨, 에러 처리 개선 필요 |
+
+아래 각 섹션에 **[리뷰 반영]** 태그로 수정사항을 표시함.
+
 ### Sub-phases for Incremental Delivery
 
 | Sub-phase | Items | Can Ship Independently | Estimated Effort |
@@ -163,12 +176,19 @@ Add a `tiff_to_png()` helper function and update `read_image_internal()` to auto
 
 ```rust
 /// Convert TIFF image data to PNG format.
+/// **[리뷰 반영]** 에러 컨텍스트 보존 (MAJOR fix)
 fn tiff_to_png(tiff_data: &[u8]) -> Result<Vec<u8>, ClipboardError> {
     let img = image::load_from_memory_with_format(tiff_data, image::ImageFormat::Tiff)
-        .map_err(|_| ClipboardError::NoImage)?;
+        .map_err(|e| {
+            log::warn!("TIFF decode failed: {e}");
+            ClipboardError::ImageDecode(e.to_string())
+        })?;
     let mut png_buf = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut png_buf), image::ImageFormat::Png)
-        .map_err(|_| ClipboardError::NoImage)?;
+        .map_err(|e| {
+            log::warn!("PNG encode failed: {e}");
+            ClipboardError::ImageEncode(e.to_string())
+        })?;
     Ok(png_buf)
 }
 ```
@@ -183,17 +203,34 @@ Add a new public function:
 
 ```rust
 /// Save clipboard image to a temp file and return the path.
-///
-/// Creates `/tmp/crux-clipboard/paste-{timestamp}.png`.
+/// **[리뷰 반영]** tempfile crate 사용, 파일명 충돌 방지, 보안 강화 (CRITICAL + MAJOR fix)
 pub fn save_image_to_temp(png_data: &[u8]) -> Result<std::path::PathBuf, ClipboardError> {
-    let dir = std::path::Path::new("/tmp/crux-clipboard");
-    std::fs::create_dir_all(dir).map_err(|_| ClipboardError::WriteFailed)?;
+    use std::io::Write;
+    // Use $TMPDIR/crux-clipboard/ with 0700 permissions (symlink attack prevention)
+    let dir = std::env::temp_dir().join("crux-clipboard");
+    std::fs::create_dir_all(&dir).map_err(|_| ClipboardError::WriteFailed)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|_| ClipboardError::WriteFailed)?;
+    }
+    // Atomic counter + PID for collision prevention
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let pid = std::process::id();
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let path = dir.join(format!("paste-{timestamp}.png"));
-    std::fs::write(&path, png_data).map_err(|_| ClipboardError::WriteFailed)?;
+    let path = dir.join(format!("paste-{pid}-{timestamp}-{seq}.png"));
+    // Write with exclusive create (O_EXCL) to prevent TOCTOU
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|_| ClipboardError::WriteFailed)?;
+    file.write_all(png_data).map_err(|_| ClipboardError::WriteFailed)?;
     Ok(path)
 }
 ```
@@ -284,6 +321,21 @@ fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) {
 }
 ```
 
+**[리뷰 반영] 클립보드 붙여넣기 시 ANSI 이스케이프 필터링 (HIGH fix)**:
+
+모든 클립보드 텍스트를 PTY에 전송하기 전에 제어 문자를 필터링한다:
+```rust
+/// Strip dangerous control characters from clipboard text before pasting.
+fn sanitize_paste_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t' || *c == '\r')
+        .collect()
+}
+```
+
+Bracketed paste mode가 활성화된 경우 `\x1b[200~`..`\x1b[201~`로 감싸서 전송 (기존 구현 활용).
+```
+
 **File**: `crates/crux-terminal-view/Cargo.toml`
 
 Add dependencies:
@@ -310,6 +362,25 @@ pub enum TerminalEvent {
 Add OSC 52 scanning in the PTY read loop byte scanner.
 
 Handle `TerminalEvent::ClipboardSet` in `CruxTerminalView::process_events()` by writing to the system clipboard via GPUI's `cx.write_to_clipboard()`.
+
+**[리뷰 반영] OSC 52 보안 정책 (CRITICAL fix)**:
+
+OSC 52 클립보드 접근은 보안 위험이 높다. 기본 정책:
+- **Write (복사)**: 허용 (프로그램이 시스템 클립보드에 쓰기)
+- **Read (쿼리)**: 기본 차단 (사용자 동의 후에만 허용, iTerm2 방식)
+
+```rust
+/// OSC 52 clipboard access policy.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Osc52Policy {
+    #[default]
+    WriteOnly,   // Default: programs can write, not read
+    ReadWrite,   // User opted in: programs can read and write
+    Disabled,    // No clipboard access via OSC 52
+}
+```
+
+설정은 향후 Phase 5 config 시스템에서 토글 가능.
 
 ### Test Strategy
 
@@ -439,12 +510,18 @@ pub struct ClipboardReadParams {
 fn default_clipboard_type() -> String { "auto".to_string() }
 
 /// Result of `crux:clipboard/read`.
+/// **[리뷰 반영]** Tagged union으로 재설계 — 불가능한 상태 원천 방지 (P0 API fix)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClipboardReadResult {
-    pub content_type: String,  // "text", "image", "html", "file_paths"
-    pub text: Option<String>,
-    pub image_path: Option<String>,  // temp file path for images
-    pub file_paths: Option<Vec<String>>,
+#[serde(tag = "content_type")]
+pub enum ClipboardReadResult {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image { image_path: String },
+    #[serde(rename = "html")]
+    Html { html: String },
+    #[serde(rename = "file_paths")]
+    FilePaths { paths: Vec<String> },
 }
 ```
 
@@ -503,9 +580,21 @@ Implementation: Use `TISSelectInputSource()` FFI (same as Vim auto-switch, see 3
 
 ```rust
 /// Parameters for `crux:events/subscribe`.
+/// **[리뷰 반영]** 이벤트 타입을 enum으로 변경 — typo 방지, IDE 지원 (P0 API fix)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventsSubscribeParams {
-    pub events: Vec<String>,  // ["pane.created", "pane.closed", "pane.focused"]
+    pub events: Vec<PaneEventType>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneEventType {
+    PaneCreated,
+    PaneClosed,
+    PaneFocused,
+    PaneResized,
+    TitleChanged,
+    ClipboardSet,
 }
 ```
 
@@ -609,7 +698,30 @@ if cursor.shape != self.last_cursor_shape {
 }
 ```
 
-Better approach: Check in `drain_events()` after processing PTY output, by comparing the current cursor shape in the term grid.
+**[리뷰 반영] 이벤트 발행 방식 확정 (아키텍처 CONCERN fix)**:
+
+`content()` 메서드에서 상태 변경은 순수성을 위반하므로, `drain_events()` 직후 shape를 비교하는 방식을 채택한다:
+
+```rust
+// In crux-terminal/src/terminal.rs
+pub fn drain_events(&mut self) -> Vec<TerminalEvent> {
+    let mut events: Vec<_> = self.event_rx.try_iter().collect();
+
+    // Check cursor shape change after processing PTY output
+    let current_shape = self.term.lock().cursor_style().shape;
+    if current_shape != self.last_cursor_shape {
+        events.push(TerminalEvent::CursorShapeChanged {
+            old_shape: self.last_cursor_shape,
+            new_shape: current_shape,
+        });
+        self.last_cursor_shape = current_shape;
+    }
+
+    events
+}
+```
+
+이 방식은 기존 이벤트 아키텍처와 일관성을 유지하며, `content()`의 순수성을 보존한다.
 
 #### 3.E.2 TIS FFI for input source switching
 
@@ -783,6 +895,7 @@ Items 3.E can be worked on in parallel with 3.C/3.D since they touch different f
 | `image` | `0.25` | crux-clipboard | TIFF-to-PNG conversion |
 | `url` | `2` | crux-clipboard | File URL parsing |
 | `shell-escape` | `0.1` | crux-terminal-view | Escape file paths for shell |
+| `core-foundation` | `0.10` | crux-terminal-view | TIS FFI CoreFoundation wrappers |
 | `objc2-foundation` | `0.2` | crux-terminal-view | `MainThreadMarker` for clipboard access |
 
 **Carbon framework**: Linked via `#[link(name = "Carbon")]` in ime_switch.rs — no crate needed.

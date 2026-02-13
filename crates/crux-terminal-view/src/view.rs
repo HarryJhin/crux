@@ -16,6 +16,16 @@ use crate::input;
 use crate::input::OptionAsAlt;
 use crate::mouse;
 
+/// Strip dangerous control characters from clipboard text before pasting.
+///
+/// Allows newline, tab, and carriage return but strips all other
+/// C0/C1 control characters (including ESC) to prevent ANSI injection attacks.
+fn sanitize_paste_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t' || *c == '\r')
+        .collect()
+}
+
 const FONT_FAMILY: &str = "Menlo";
 const FONT_SIZE: f32 = 14.0;
 
@@ -595,22 +605,57 @@ impl CruxTerminalView {
         }
     }
 
-    /// Paste text from the system clipboard into the terminal.
+    /// Paste content from the system clipboard into the terminal.
+    ///
+    /// Checks NSPasteboard for rich content (images, file paths) first,
+    /// then falls back to GPUI's text-only clipboard API.
     fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) {
+        // Try rich clipboard (images, file paths) via NSPasteboard.
+        #[cfg(target_os = "macos")]
+        if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
+            if let Ok(content) = crux_clipboard::Clipboard::read(mtm) {
+                match content {
+                    crux_clipboard::ClipboardContent::Image { png_data } => {
+                        if let Ok(path) = crux_clipboard::save_image_to_temp(&png_data) {
+                            let path_str = path.to_string_lossy().to_string();
+                            self.write_to_pty_with_bracketed_paste(path_str.as_bytes());
+                            return;
+                        }
+                    }
+                    crux_clipboard::ClipboardContent::FilePaths(paths) => {
+                        let text = paths
+                            .iter()
+                            .map(|p| shell_escape::escape(p.to_string_lossy()).to_string())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        self.write_to_pty_with_bracketed_paste(text.as_bytes());
+                        return;
+                    }
+                    _ => {} // Fall through to text paste below.
+                }
+            }
+        }
+
+        // Default: text paste via GPUI clipboard API.
         if let Some(item) = cx.read_from_clipboard() {
             if let Some(text) = item.text() {
                 if !text.is_empty() {
-                    // Use bracketed paste mode if terminal supports it.
-                    let mode = self.terminal.content().mode;
-                    if mode.contains(TermMode::BRACKETED_PASTE) {
-                        self.terminal.write_to_pty(b"\x1b[200~");
-                        self.terminal.write_to_pty(text.as_bytes());
-                        self.terminal.write_to_pty(b"\x1b[201~");
-                    } else {
-                        self.terminal.write_to_pty(text.as_bytes());
-                    }
+                    let sanitized = sanitize_paste_text(&text);
+                    self.write_to_pty_with_bracketed_paste(sanitized.as_bytes());
                 }
             }
+        }
+    }
+
+    /// Write data to PTY, wrapping in bracketed paste mode if enabled.
+    fn write_to_pty_with_bracketed_paste(&mut self, data: &[u8]) {
+        let mode = self.terminal.content().mode;
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            self.terminal.write_to_pty(b"\x1b[200~");
+            self.terminal.write_to_pty(data);
+            self.terminal.write_to_pty(b"\x1b[201~");
+        } else {
+            self.terminal.write_to_pty(data);
         }
     }
 
@@ -645,6 +690,9 @@ impl CruxTerminalView {
                 TerminalEvent::PromptMark { .. } => {
                     // Prompt marks are stored internally by CruxTerminal::drain_events().
                     // The view layer does not need to handle them.
+                }
+                TerminalEvent::ClipboardSet { data } => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(data));
                 }
             }
         }
@@ -872,7 +920,11 @@ impl EntityInputHandler for CruxTerminalView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        log::trace!("[IME] marked_text_range called, marked_text={:?}, ime_buffer={:?}", self.marked_text, self.ime_buffer);
+        log::trace!(
+            "[IME] marked_text_range called, marked_text={:?}, ime_buffer={:?}",
+            self.marked_text,
+            self.ime_buffer
+        );
         // Return Some only when there's real composition (marked text).
         //
         // GPUI routes keystrokes based on is_composing (window.rs:1696-1712):
@@ -889,10 +941,8 @@ impl EntityInputHandler for CruxTerminalView {
         // for the first consonant.
         if let Some(ref text) = self.marked_text {
             if !text.is_empty() {
-                let buf_utf16_len: usize =
-                    self.ime_buffer.chars().map(|c| c.len_utf16()).sum();
-                let marked_utf16_len: usize =
-                    text.chars().map(|c| c.len_utf16()).sum();
+                let buf_utf16_len: usize = self.ime_buffer.chars().map(|c| c.len_utf16()).sum();
+                let marked_utf16_len: usize = text.chars().map(|c| c.len_utf16()).sum();
                 return Some(buf_utf16_len..(buf_utf16_len + marked_utf16_len));
             }
         }
@@ -911,7 +961,12 @@ impl EntityInputHandler for CruxTerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        log::info!("[IME] replace_text_in_range called, text={:?}, range={:?}, buf={:?}", text, range_utf16, self.ime_buffer);
+        log::info!(
+            "[IME] replace_text_in_range called, text={:?}, range={:?}, buf={:?}",
+            text,
+            range_utf16,
+            self.ime_buffer
+        );
         // Clear composition state — this is a commit.
         self.marked_text = None;
         self.marked_text_selected_range = None;
@@ -945,12 +1000,14 @@ impl EntityInputHandler for CruxTerminalView {
                     let replace_start = utf16_offset_to_utf8(&self.ime_buffer, range.start);
                     let replace_end =
                         utf16_offset_to_utf8(&self.ime_buffer, range.end.min(buf_utf16_len));
-                    let chars_to_delete = self.ime_buffer[replace_start..replace_end].chars().count();
+                    let chars_to_delete =
+                        self.ime_buffer[replace_start..replace_end].chars().count();
                     // Send DEL (\x7f) for each character to erase from shell input.
                     for _ in 0..chars_to_delete {
                         self.terminal.write_to_pty(&[0x7f]);
                     }
-                    self.ime_buffer.replace_range(replace_start..replace_end, "");
+                    self.ime_buffer
+                        .replace_range(replace_start..replace_end, "");
                 }
             }
 
@@ -1008,7 +1065,8 @@ impl EntityInputHandler for CruxTerminalView {
                 for _ in 0..chars_to_delete {
                     self.terminal.write_to_pty(&[0x7f]);
                 }
-                self.ime_buffer.replace_range(replace_start..replace_end, "");
+                self.ime_buffer
+                    .replace_range(replace_start..replace_end, "");
             }
         }
 
@@ -1100,7 +1158,10 @@ impl Render for CruxTerminalView {
         let cell_height = self.cell_height;
         let marked_text = self.marked_text.clone();
         if marked_text.is_some() {
-            log::debug!("[IME] render: passing marked_text={:?} to canvas", marked_text);
+            log::debug!(
+                "[IME] render: passing marked_text={:?} to canvas",
+                marked_text
+            );
         }
 
         // Clone entity and focus handle for the resize/input canvas closures.
@@ -1122,6 +1183,25 @@ impl Render for CruxTerminalView {
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::handle_mouse_up))
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+            .on_drop(cx.listener(
+                |this: &mut Self, paths: &ExternalPaths, _window, _cx| {
+                    let escaped: Vec<String> = paths
+                        .paths()
+                        .iter()
+                        .map(|p| shell_escape::escape(p.to_string_lossy()).to_string())
+                        .collect();
+                    let text = escaped.join(" ");
+                    this.write_to_pty_with_bracketed_paste(text.as_bytes());
+                },
+            ))
+            .drag_over::<ExternalPaths>(|style, _, _, _| {
+                style.border_2().border_color(Hsla {
+                    h: 0.58,
+                    s: 0.7,
+                    l: 0.5,
+                    a: 0.8,
+                })
+            })
             .child(
                 // Invisible canvas to detect size changes, capture origin, and register IME.
                 canvas(
