@@ -454,7 +454,7 @@ Based on failure analysis of Alacritty, Ghostty, WezTerm:
 - [x] IME candidate window appears at correct cursor position
 - [x] No freezing, no double spaces, no preedit destruction
 - [x] Cmd+V pastes images as temp file paths for Claude Code
-- [x] Drag & drop files into terminal (image drop deferred)
+- [x] Drag & drop files and images into terminal (GPUI patched for image data drops)
 - [x] Vim users can type Korean in Insert mode with auto-switch in Normal mode
 
 ---
