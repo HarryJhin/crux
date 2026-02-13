@@ -79,7 +79,7 @@ fn run_cli(action: cli::commands::CliAction) -> anyhow::Result<()> {
     use cli::commands::CliAction;
     use crux_protocol::*;
 
-    let mut client = cli::client::connect()?;
+    let client = cli::client::connect()?;
 
     match action {
         CliAction::SplitPane {
