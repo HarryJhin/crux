@@ -623,7 +623,7 @@ impl CruxApp {
         cx: &App,
     ) -> anyhow::Result<crux_protocol::SessionSaveResult> {
         let file_path = match path {
-            Some(p) => std::path::PathBuf::from(p),
+            Some(p) => std::path::Path::new(&p).to_path_buf(),
             None => Self::default_session_path(),
         };
 
@@ -649,7 +649,7 @@ impl CruxApp {
         cx: &mut Context<Self>,
     ) -> anyhow::Result<crux_protocol::SessionLoadResult> {
         let file_path = match path {
-            Some(p) => std::path::PathBuf::from(p),
+            Some(p) => std::path::Path::new(&p).to_path_buf(),
             None => Self::default_session_path(),
         };
 

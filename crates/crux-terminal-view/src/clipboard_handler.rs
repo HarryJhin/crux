@@ -25,13 +25,18 @@ impl CruxTerminalView {
         // Try rich clipboard (images, file paths) via NSPasteboard.
         #[cfg(target_os = "macos")]
         if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
-            if let Ok(content) = crux_clipboard::Clipboard::read(mtm) {
-                match content {
+            match crux_clipboard::Clipboard::read(mtm) {
+                Ok(content) => match content {
                     crux_clipboard::ClipboardContent::Image { png_data } => {
-                        if let Ok(path) = crux_clipboard::save_image_to_temp(&png_data) {
-                            let path_str = path.to_string_lossy().to_string();
-                            self.write_to_pty_with_bracketed_paste(path_str.as_bytes());
-                            return;
+                        match crux_clipboard::save_image_to_temp(&png_data) {
+                            Ok(path) => {
+                                let path_str = path.to_string_lossy().to_string();
+                                self.write_to_pty_with_bracketed_paste(path_str.as_bytes());
+                                return;
+                            }
+                            Err(e) => {
+                                log::debug!("failed to save clipboard image to temp file, falling back to text paste: {e}");
+                            }
                         }
                     }
                     crux_clipboard::ClipboardContent::FilePaths(paths) => {
@@ -44,6 +49,9 @@ impl CruxTerminalView {
                         return;
                     }
                     _ => {} // Fall through to text paste below.
+                },
+                Err(e) => {
+                    log::debug!("clipboard read failed, falling back to text paste: {e}");
                 }
             }
         }

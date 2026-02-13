@@ -64,7 +64,9 @@ impl IpcClient {
                 }
             }
         }
-        unreachable!()
+        Err(anyhow::anyhow!(
+            "failed to connect after {max_attempts} attempts"
+        ))
     }
 
     /// Send a JSON-RPC request and wait for the response.

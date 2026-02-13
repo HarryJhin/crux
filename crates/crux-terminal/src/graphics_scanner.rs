@@ -683,4 +683,62 @@ mod tests {
             _ => panic!("expected Graphics event"),
         }
     }
+
+    // --- Edge case tests ---
+
+    #[test]
+    fn test_accumulator_overflow() {
+        let (tx, rx) = mpsc::channel();
+        let mut scanner = KittyGraphicsScanner::new();
+
+        // Start a valid Kitty graphics sequence
+        scanner.feed(b"\x1b_Ga=t;", &tx);
+        assert!(scanner.is_accumulating());
+
+        // Feed data exceeding MAX_ACCUMULATOR_SIZE (64MB)
+        // We'll feed 65MB in chunks to trigger the overflow check
+        let chunk = vec![b'A'; 1024 * 1024]; // 1MB chunk
+        for _ in 0..65 {
+            scanner.feed(&chunk, &tx);
+        }
+
+        // Scanner should have reset due to overflow
+        assert!(!scanner.is_accumulating(), "scanner should reset after overflow");
+        assert!(rx.try_recv().is_err(), "no event should be emitted for oversized payload");
+    }
+
+    #[test]
+    fn test_malformed_nested_apc() {
+        let (tx, rx) = mpsc::channel();
+        let mut scanner = KittyGraphicsScanner::new();
+
+        // Start a valid Kitty graphics sequence
+        scanner.feed(b"\x1b_Ga=t;payload", &tx);
+        assert!(scanner.is_accumulating());
+
+        // Send a nested APC start without proper termination
+        // ESC _ inside the payload should trigger graceful restart
+        scanner.feed(b"\x1b_Xnot-graphics\x1b\\", &tx);
+
+        // The scanner should have discarded the first sequence and ignored the non-graphics APC
+        assert!(!scanner.is_accumulating());
+        assert!(rx.try_recv().is_err(), "malformed nested APC should not emit event");
+    }
+
+    #[test]
+    fn test_empty_payload() {
+        let (tx, rx) = mpsc::channel();
+        let mut scanner = KittyGraphicsScanner::new();
+
+        // Send ESC _ G with valid params but no payload data before ST.
+        // The semicolon separates params from payload; empty payload is still valid.
+        scanner.feed(b"\x1b_Ga=t,f=32;\x1b\\", &tx);
+
+        // Scanner should complete and emit an event (empty payload is valid).
+        assert!(!scanner.is_accumulating());
+        assert!(
+            rx.try_recv().is_ok(),
+            "valid graphics command with empty payload should emit event"
+        );
+    }
 }
