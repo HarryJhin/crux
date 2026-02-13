@@ -59,8 +59,8 @@ impl IpcClient {
 
         let request = JsonRpcRequest::new(JsonRpcId::Number(id), method, Some(params));
         let req_bytes = serde_json::to_vec(&request)?;
-        let frame = encode_frame(&req_bytes)
-            .map_err(|e| anyhow::anyhow!("frame encode error: {e}"))?;
+        let frame =
+            encode_frame(&req_bytes).map_err(|e| anyhow::anyhow!("frame encode error: {e}"))?;
 
         stream.write_all(&frame)?;
         stream.flush()?;
@@ -75,8 +75,9 @@ impl IpcClient {
             }
             pending.extend_from_slice(&buf[..n]);
 
-            if let Some((_consumed, payload)) = decode_frame(&pending)
-                .map_err(|e| anyhow::anyhow!("frame decode error: {e}"))? {
+            if let Some((_consumed, payload)) =
+                decode_frame(&pending).map_err(|e| anyhow::anyhow!("frame decode error: {e}"))?
+            {
                 let response: JsonRpcResponse = serde_json::from_slice(&payload)?;
                 if let Some(err) = response.error {
                     bail!("server error {}: {}", err.code, err.message);
@@ -111,7 +112,10 @@ mod tests {
         // Attempting to connect with at least 1 attempt should try to connect.
         // This will fail (no running Crux instance), but it should not panic.
         let result = IpcClient::connect_with_retry(1);
-        assert!(result.is_err(), "connect_with_retry should fail without running Crux");
+        assert!(
+            result.is_err(),
+            "connect_with_retry should fail without running Crux"
+        );
     }
 
     #[test]
@@ -149,7 +153,11 @@ mod tests {
     fn test_jsonrpc_request_serialization() {
         // Test that we can create and serialize a valid JSON-RPC request.
         use crux_protocol::JsonRpcRequest;
-        let request = JsonRpcRequest::new(JsonRpcId::Number(1), "test_method", Some(serde_json::json!({"key": "value"})));
+        let request = JsonRpcRequest::new(
+            JsonRpcId::Number(1),
+            "test_method",
+            Some(serde_json::json!({"key": "value"})),
+        );
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("\"jsonrpc\":\"2.0\""));
         assert!(json.contains("\"method\":\"test_method\""));

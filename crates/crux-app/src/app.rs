@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use gpui::*;
-use gpui_component::dock::{DockArea, DockAreaState, DockItem, DockPlacement, PanelView, StackPanel, TabPanel, ToggleZoom};
+use gpui_component::dock::{
+    DockArea, DockAreaState, DockItem, DockPlacement, PanelView, StackPanel, TabPanel, ToggleZoom,
+};
 use gpui_component::Placement;
 
 use crux_ipc::IpcCommand;
@@ -110,7 +112,10 @@ impl CruxApp {
 
         let mcp_binary = exe_path.parent()?.join("crux-mcp");
         if !mcp_binary.exists() {
-            log::info!("MCP server binary not found at {}, skipping auto-launch", mcp_binary.display());
+            log::info!(
+                "MCP server binary not found at {}, skipping auto-launch",
+                mcp_binary.display()
+            );
             return None;
         }
 
@@ -125,7 +130,11 @@ impl CruxApp {
             .spawn()
         {
             Ok(child) => {
-                log::info!("MCP server spawned at {} (PID {})", mcp_binary.display(), child.id());
+                log::info!(
+                    "MCP server spawned at {} (PID {})",
+                    mcp_binary.display(),
+                    child.id()
+                );
                 Some(child)
             }
             Err(e) => {
@@ -665,7 +674,13 @@ impl CruxApp {
             }
 
             IpcCommand::ResizePane { params, reply } => {
-                let result = self.handle_resize_pane(params.pane_id, params.width, params.height, window, cx);
+                let result = self.handle_resize_pane(
+                    params.pane_id,
+                    params.width,
+                    params.height,
+                    window,
+                    cx,
+                );
                 let _ = reply.send(result);
             }
 
@@ -781,10 +796,14 @@ impl CruxApp {
         cx: &mut App,
     ) -> anyhow::Result<()> {
         if width.is_none() && height.is_none() {
-            return Err(anyhow::anyhow!("at least one of width or height must be specified"));
+            return Err(anyhow::anyhow!(
+                "at least one of width or height must be specified"
+            ));
         }
 
-        let panel_entity = self.pane_registry.get(&pane_id)
+        let panel_entity = self
+            .pane_registry
+            .get(&pane_id)
             .ok_or_else(|| anyhow::anyhow!("pane {} not found", pane_id))?;
         let target_view: Arc<dyn PanelView> = Arc::new(panel_entity.clone());
 
@@ -792,7 +811,9 @@ impl CruxApp {
 
         // Try width resize (horizontal split axis)
         if let Some(w) = width {
-            if let Some((stack_panel, ix)) = Self::find_stack_panel_containing(&items, &target_view, cx) {
+            if let Some((stack_panel, ix)) =
+                Self::find_stack_panel_containing(&items, &target_view, cx)
+            {
                 stack_panel.update(cx, |sp, cx| {
                     sp.resize_panel_at(ix, px(w), window, cx);
                 });
@@ -801,7 +822,9 @@ impl CruxApp {
 
         // Try height resize (vertical split axis)
         if let Some(h) = height {
-            if let Some((stack_panel, ix)) = Self::find_stack_panel_containing(&items, &target_view, cx) {
+            if let Some((stack_panel, ix)) =
+                Self::find_stack_panel_containing(&items, &target_view, cx)
+            {
                 stack_panel.update(cx, |sp, cx| {
                     sp.resize_panel_at(ix, px(h), window, cx);
                 });
@@ -832,7 +855,9 @@ impl CruxApp {
                             }
                             DockItem::Split { .. } => {
                                 // Recurse into nested splits — the pane might be deeper.
-                                if let Some(result) = Self::find_stack_panel_containing(child, target, cx) {
+                                if let Some(result) =
+                                    Self::find_stack_panel_containing(child, target, cx)
+                                {
                                     return Some(result);
                                 }
                                 // If not found deeper, the target is directly in this split.
@@ -851,12 +876,10 @@ impl CruxApp {
     /// Check if a DockItem (recursively) contains the target pane view.
     fn dock_item_contains_pane(item: &DockItem, target: &Arc<dyn PanelView>, _cx: &App) -> bool {
         match item {
-            DockItem::Tabs { items, .. } => {
-                items.iter().any(|panel| panel.view() == target.view())
-            }
-            DockItem::Split { items, .. } => {
-                items.iter().any(|child| Self::dock_item_contains_pane(child, target, _cx))
-            }
+            DockItem::Tabs { items, .. } => items.iter().any(|panel| panel.view() == target.view()),
+            DockItem::Split { items, .. } => items
+                .iter()
+                .any(|child| Self::dock_item_contains_pane(child, target, _cx)),
             DockItem::Panel { view, .. } => view.view() == target.view(),
             _ => false,
         }
@@ -951,9 +974,8 @@ impl CruxApp {
         let json = std::fs::read_to_string(&file_path)?;
         let state: DockAreaState = serde_json::from_str(&json)?;
 
-        self.dock_area.update(cx, |area, cx| {
-            area.load(state, window, cx)
-        })?;
+        self.dock_area
+            .update(cx, |area, cx| area.load(state, window, cx))?;
 
         // Re-populate pane_registry by walking the new DockItem tree.
         self.pane_registry.clear();

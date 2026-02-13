@@ -126,13 +126,14 @@ impl CruxMcpServer {
         .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
         .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
 
-        let output = serde_json::to_string_pretty(&result)
-            .unwrap_or_else(|_| result.to_string());
+        let output = serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
     /// Save the current terminal session layout to a file.
-    #[tool(description = "Save the current terminal session layout to a JSON file. Uses ~/.config/crux/session.json by default.")]
+    #[tool(
+        description = "Save the current terminal session layout to a JSON file. Uses ~/.config/crux/session.json by default."
+    )]
     async fn crux_save_session(
         &self,
         Parameters(params): Parameters<SessionPathParam>,
@@ -154,7 +155,9 @@ impl CruxMcpServer {
     }
 
     /// Load a terminal session layout from a file, restoring panes and splits.
-    #[tool(description = "Load a terminal session layout from a JSON file, restoring panes and splits. Uses ~/.config/crux/session.json by default.")]
+    #[tool(
+        description = "Load a terminal session layout from a JSON file, restoring panes and splits. Uses ~/.config/crux/session.json by default."
+    )]
     async fn crux_load_session(
         &self,
         Parameters(params): Parameters<SessionPathParam>,
@@ -294,5 +297,4 @@ mod tests {
         assert!(output.contains("\"lines\""));
         assert!(output.contains("\"string instead of array\""));
     }
-
 }

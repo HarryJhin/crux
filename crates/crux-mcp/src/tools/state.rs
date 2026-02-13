@@ -116,10 +116,7 @@ impl CruxMcpServer {
         .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
         .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
 
-        let text = result
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let text = result.get("text").and_then(|v| v.as_str()).unwrap_or("");
         let has_selection = result
             .get("has_selection")
             .and_then(|v| v.as_bool())

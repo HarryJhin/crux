@@ -257,5 +257,4 @@ mod tests {
         assert_eq!(parsed.width, Some(400.0));
         assert_eq!(parsed.height, Some(300.0));
     }
-
 }

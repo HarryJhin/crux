@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use gpui::*;
-use gpui_component::dock::{Panel, PanelEvent, PanelInfo, PanelState, register_panel};
+use gpui_component::dock::{register_panel, Panel, PanelEvent, PanelInfo, PanelState};
 
 use crux_protocol::PaneId;
 use crux_terminal_view::CruxTerminalView;
@@ -10,19 +10,28 @@ use crux_terminal_view::CruxTerminalView;
 /// Register `CruxTerminalPanel` in the global PanelRegistry so that
 /// `DockArea::load` can reconstruct terminal panels from saved state.
 pub fn register(cx: &mut App) {
-    register_panel(cx, "CruxTerminalPanel", |_dock_area, _state, info, window, cx| {
-        let (pane_id, cwd) = match info {
-            PanelInfo::Panel(json) => {
-                let id = json.get("pane_id").and_then(|v| v.as_u64()).unwrap_or(0);
-                let cwd = json.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
-                (PaneId(id), cwd)
-            }
-            _ => (PaneId(0), None),
-        };
-        Box::new(cx.new(|cx| {
-            CruxTerminalPanel::new(pane_id, cwd.as_deref(), None, None, window, cx)
-        }))
-    });
+    register_panel(
+        cx,
+        "CruxTerminalPanel",
+        |_dock_area, _state, info, window, cx| {
+            let (pane_id, cwd) = match info {
+                PanelInfo::Panel(json) => {
+                    let id = json.get("pane_id").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let cwd = json
+                        .get("cwd")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    (PaneId(id), cwd)
+                }
+                _ => (PaneId(0), None),
+            };
+            Box::new(
+                cx.new(|cx| {
+                    CruxTerminalPanel::new(pane_id, cwd.as_deref(), None, None, window, cx)
+                }),
+            )
+        },
+    );
 }
 
 /// A DockArea panel that wraps a `CruxTerminalView`.

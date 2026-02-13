@@ -156,7 +156,11 @@ pub struct JsonRpcError {
 }
 
 impl JsonRpcRequest {
-    pub fn new(id: JsonRpcId, method: impl Into<String>, params: Option<serde_json::Value>) -> Self {
+    pub fn new(
+        id: JsonRpcId,
+        method: impl Into<String>,
+        params: Option<serde_json::Value>,
+    ) -> Self {
         Self {
             jsonrpc: "2.0".into(),
             id: Some(id),
@@ -507,7 +511,9 @@ mod tests {
     fn frame_round_trip() {
         let payload = b"hello world";
         let frame = encode_frame(payload).expect("encode");
-        let (consumed, decoded) = decode_frame(&frame).expect("no error").expect("should decode");
+        let (consumed, decoded) = decode_frame(&frame)
+            .expect("no error")
+            .expect("should decode");
         assert_eq!(consumed, frame.len());
         assert_eq!(decoded, payload);
     }
@@ -546,11 +552,7 @@ mod tests {
 
     #[test]
     fn jsonrpc_request_string_id() {
-        let req = JsonRpcRequest::new(
-            JsonRpcId::String("abc-123".into()),
-            method::PANE_LIST,
-            None,
-        );
+        let req = JsonRpcRequest::new(JsonRpcId::String("abc-123".into()), method::PANE_LIST, None);
         let json = serde_json::to_string(&req).unwrap();
         let parsed: JsonRpcRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, Some(JsonRpcId::String("abc-123".into())));
@@ -593,11 +595,7 @@ mod tests {
 
     #[test]
     fn jsonrpc_response_null_id() {
-        let resp = JsonRpcResponse::error(
-            JsonRpcId::Null,
-            error_code::PARSE_ERROR,
-            "parse error",
-        );
+        let resp = JsonRpcResponse::error(JsonRpcId::Null, error_code::PARSE_ERROR, "parse error");
         let json = serde_json::to_string(&resp).unwrap();
         let parsed: JsonRpcResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, JsonRpcId::Null);

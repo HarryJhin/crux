@@ -88,9 +88,7 @@ pub async fn handle_client(
                         for item in arr {
                             match serde_json::from_value::<JsonRpcRequest>(item) {
                                 Ok(request) => {
-                                    if let Some(resp) =
-                                        dispatch_request(request, &cmd_tx).await
-                                    {
+                                    if let Some(resp) = dispatch_request(request, &cmd_tx).await {
                                         responses.push(resp);
                                     }
                                     // Notifications (None returned) are not added.

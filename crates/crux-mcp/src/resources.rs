@@ -125,9 +125,9 @@ mod tests {
     #[test]
     fn test_resource_templates_scrollback() {
         let templates = resource_templates();
-        let scrollback = templates.iter().find(|t| {
-            t.raw.uri_template == "crux://pane/{pane_id}/scrollback"
-        });
+        let scrollback = templates
+            .iter()
+            .find(|t| t.raw.uri_template == "crux://pane/{pane_id}/scrollback");
         assert!(scrollback.is_some(), "scrollback template should exist");
         let template = &scrollback.unwrap().raw;
         assert_eq!(template.name, "Pane Scrollback");
@@ -137,9 +137,9 @@ mod tests {
     #[test]
     fn test_resource_templates_state() {
         let templates = resource_templates();
-        let state = templates.iter().find(|t| {
-            t.raw.uri_template == "crux://pane/{pane_id}/state"
-        });
+        let state = templates
+            .iter()
+            .find(|t| t.raw.uri_template == "crux://pane/{pane_id}/state");
         assert!(state.is_some(), "state template should exist");
         let template = &state.unwrap().raw;
         assert_eq!(template.name, "Pane State");
