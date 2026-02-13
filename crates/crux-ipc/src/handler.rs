@@ -271,6 +271,12 @@ async fn dispatch_request(
             })
             .await
         }
+        method::EVENTS_POLL => {
+            send_command(id.clone(), cmd_tx, |reply| IpcCommand::EventsPoll {
+                reply,
+            })
+            .await
+        }
         _ => JsonRpcResponse::error(
             id,
             error_code::METHOD_NOT_FOUND,

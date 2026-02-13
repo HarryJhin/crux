@@ -435,7 +435,8 @@ Based on failure analysis of Alacritty, Ghostty, WezTerm:
 - [x] `crux:clipboard/write` -- write text/HTML/image to clipboard
 - [x] `crux:ime/get-state` -- query IME composition state (real data from terminal view)
 - [x] `crux:ime/set-input-source` -- switch input method programmatically (via Carbon TIS FFI)
-- [ ] `crux:events/subscribe` -- pane events, focus events (deferred -- requires IPC architecture change for push notifications; protocol types defined, event buffer in place)
+- [x] `crux:events/poll` -- poll buffered pane lifecycle events (create, close, focus, resize, title change)
+- [ ] `crux:events/subscribe` -- push-based event notifications (deferred -- requires broadcast channel for multi-client support)
 
 ### 3.7 Vim Mode IME Auto-Switch
 

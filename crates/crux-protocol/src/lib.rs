@@ -424,6 +424,7 @@ pub mod method {
     pub const IME_GET_STATE: &str = "crux:ime/get-state";
     pub const IME_SET_INPUT_SOURCE: &str = "crux:ime/set-input-source";
     pub const EVENTS_SUBSCRIBE: &str = "crux:events/subscribe";
+    pub const EVENTS_POLL: &str = "crux:events/poll";
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +581,12 @@ pub enum PaneEventType {
     PaneResized,
     TitleChanged,
     ClipboardSet,
+}
+
+/// Result of `crux:events/poll` — returns buffered events since last poll.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventsPollResult {
+    pub events: Vec<PaneEvent>,
 }
 
 /// OSC 52 clipboard access policy.

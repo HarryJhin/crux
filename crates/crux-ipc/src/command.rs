@@ -7,11 +7,11 @@ use tokio::sync::oneshot;
 
 use crux_protocol::{
     ActivatePaneParams, ClipboardReadParams, ClipboardReadResult, ClipboardWriteParams,
-    ClosePaneParams, GetSelectionParams, GetSelectionResult, GetSnapshotParams, GetSnapshotResult,
-    GetTextParams, GetTextResult, HandshakeParams, HandshakeResult, ImeSetInputSourceParams,
-    ImeStateResult, ListPanesResult, ResizePaneParams, SendTextParams, SendTextResult,
-    SessionLoadParams, SessionLoadResult, SessionSaveParams, SessionSaveResult, SplitPaneParams,
-    SplitPaneResult, WindowCreateParams, WindowCreateResult, WindowListResult,
+    ClosePaneParams, EventsPollResult, GetSelectionParams, GetSelectionResult, GetSnapshotParams,
+    GetSnapshotResult, GetTextParams, GetTextResult, HandshakeParams, HandshakeResult,
+    ImeSetInputSourceParams, ImeStateResult, ListPanesResult, ResizePaneParams, SendTextParams,
+    SendTextResult, SessionLoadParams, SessionLoadResult, SessionSaveParams, SessionSaveResult,
+    SplitPaneParams, SplitPaneResult, WindowCreateParams, WindowCreateResult, WindowListResult,
 };
 
 /// Commands sent from the IPC server to the GPUI main thread.
@@ -84,5 +84,8 @@ pub enum IpcCommand {
     ImeSetInputSource {
         params: ImeSetInputSourceParams,
         reply: oneshot::Sender<anyhow::Result<()>>,
+    },
+    EventsPoll {
+        reply: oneshot::Sender<anyhow::Result<EventsPollResult>>,
     },
 }

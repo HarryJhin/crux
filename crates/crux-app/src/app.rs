@@ -469,7 +469,6 @@ impl CruxApp {
     }
 
     /// Drain all buffered pane events for consumption.
-    #[allow(dead_code)]
     fn drain_pane_events(&mut self) -> Vec<PaneEvent> {
         std::mem::take(&mut self.pane_events)
     }
@@ -901,6 +900,11 @@ impl CruxApp {
                         "IME switching not supported on this platform"
                     )));
                 }
+            }
+
+            IpcCommand::EventsPoll { reply } => {
+                let events = self.drain_pane_events();
+                let _ = reply.send(Ok(crux_protocol::EventsPollResult { events }));
             }
         }
     }
