@@ -342,6 +342,9 @@ impl CruxApp {
 
         if let Some(pane_id) = closing_pane_id {
             self.pane_registry.remove(&pane_id);
+            if self.active_pane == Some(pane_id) {
+                self.active_pane = None;
+            }
             self.pane_parents.remove(&pane_id);
             self.emit_pane_event(PaneEvent::Closed { pane_id });
         }

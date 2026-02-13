@@ -475,7 +475,11 @@ impl CruxTerminal {
 pub fn extract_text_lines(content: &TerminalContent) -> Vec<String> {
     let mut lines: Vec<String> = vec![String::new(); content.rows];
     for cell in &content.cells {
-        let row = cell.point.line.0 as usize;
+        let row = cell.point.line.0;
+        if row < 0 {
+            continue;
+        }
+        let row = row as usize;
         if row < content.rows {
             lines[row].push(cell.c);
         }

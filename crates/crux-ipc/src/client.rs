@@ -113,7 +113,9 @@ impl IpcClient {
                 if let Some(err) = response.error {
                     bail!("server error {}: {}", err.code, err.message);
                 }
-                // Drain consumed bytes from pending buffer.
+                // Note: any remaining bytes in pending are discarded after drain.
+                // This is safe because the client is strictly synchronous
+                // (one request, one response per call).
                 pending.drain(..consumed);
                 return Ok(response.result.unwrap_or(serde_json::Value::Null));
             }

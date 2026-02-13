@@ -25,6 +25,10 @@ use std::sync::mpsc;
 use crate::event::{GraphicsProtocol, TerminalEvent};
 use crate::osc_scanner::find_string_terminator;
 
+/// Maximum accumulator size for graphics payloads (64MB).
+/// Prevents unbounded memory growth from malicious PTY applications.
+const MAX_ACCUMULATOR_SIZE: usize = 64 * 1024 * 1024;
+
 /// Stateful scanner for Kitty graphics APC sequences.
 ///
 /// Tracks state across PTY reads because graphics payloads (base64-encoded
@@ -118,7 +122,13 @@ impl KittyGraphicsScanner {
                         self.state = KittyScanState::PayloadEscSeen;
                         i += 1;
                     } else {
-                        self.accumulator.push(buf[i]);
+                        // Guard against unbounded accumulator growth.
+                        if self.accumulator.len() >= MAX_ACCUMULATOR_SIZE {
+                            log::warn!("Kitty graphics accumulator exceeded 64MB, discarding malformed sequence");
+                            self.reset();
+                        } else {
+                            self.accumulator.push(buf[i]);
+                        }
                         i += 1;
                     }
                 }

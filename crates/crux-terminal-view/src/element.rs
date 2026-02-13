@@ -318,7 +318,7 @@ pub fn render_terminal_canvas(config: RenderConfig) -> impl IntoElement {
             let cursor_quad = if cursor_visible
                 && content.mode.contains(crux_terminal::TermMode::SHOW_CURSOR)
             {
-                let cursor_row = content.cursor.point.line.0 as usize;
+                let cursor_row = content.cursor.point.line.0.max(0) as usize;
                 let cursor_col = content.cursor.point.column.0;
 
                 // Detect wide (CJK) characters: use 2x cell_width for the cursor.
@@ -372,7 +372,7 @@ pub fn render_terminal_canvas(config: RenderConfig) -> impl IntoElement {
                 if text.is_empty() {
                     return None;
                 }
-                let cursor_row = content.cursor.point.line.0 as usize;
+                let cursor_row = content.cursor.point.line.0.max(0) as usize;
                 let cursor_col = content.cursor.point.column.0;
                 let comp_origin = point(
                     origin.x + cell_width * cursor_col as f32,

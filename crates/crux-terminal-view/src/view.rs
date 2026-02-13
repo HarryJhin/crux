@@ -302,8 +302,10 @@ impl CruxTerminalView {
     /// Convert pixel position relative to canvas origin into terminal grid coordinates.
     fn pixel_to_grid(&self, position: Point2D<Pixels>) -> Point {
         let col = ((f32::from(position.x) - f32::from(self.canvas_origin.x))
+            .max(0.0)
             / f32::from(self.cell_width)) as usize;
         let row = ((f32::from(position.y) - f32::from(self.canvas_origin.y))
+            .max(0.0)
             / f32::from(self.cell_height)) as usize;
         let size = self.terminal.size();
         let col = col.min(size.cols.saturating_sub(1));
