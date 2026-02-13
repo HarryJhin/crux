@@ -22,10 +22,28 @@ pub async fn handle_client(
     let mut buf = vec![0u8; 8192];
     let mut pending = Vec::new();
 
+    // Maximum pending buffer size (16MB, matching MAX_FRAME_SIZE in protocol).
+    const MAX_PENDING_SIZE: usize = 16 * 1024 * 1024;
+
     loop {
         let n = stream.read(&mut buf).await?;
         if n == 0 {
             break; // client disconnected
+        }
+
+        // Check buffer size limit before extending to prevent unbounded growth.
+        if pending.len() + n > MAX_PENDING_SIZE {
+            // Send error response and drop connection.
+            let resp = JsonRpcResponse::error(
+                JsonRpcId::Null,
+                error_code::INVALID_REQUEST,
+                format!("request too large ({} bytes)", pending.len() + n),
+            );
+            let resp_bytes = serde_json::to_vec(&resp)?;
+            if let Ok(frame) = encode_frame(&resp_bytes) {
+                let _ = stream.write_all(&frame).await;
+            }
+            return Ok(());
         }
 
         pending.extend_from_slice(&buf[..n]);

@@ -56,6 +56,7 @@ impl CruxApp {
                         params.env.as_ref(),
                         self.config.font.clone(),
                         self.config.colors.clone(),
+                        self.config.terminal.clone(),
                         window,
                         cx,
                     )

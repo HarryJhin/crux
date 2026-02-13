@@ -85,6 +85,9 @@ impl IpcClient {
         let mut buf = vec![0u8; 65536];
         let mut pending = Vec::new();
 
+        // Maximum pending buffer size (16MB, matching MAX_FRAME_SIZE in protocol).
+        const MAX_PENDING_SIZE: usize = 16 * 1024 * 1024;
+
         loop {
             let n = stream.read(&mut buf)?;
             if n == 0 {
@@ -92,13 +95,20 @@ impl IpcClient {
             }
             pending.extend_from_slice(&buf[..n]);
 
-            if let Some((_consumed, payload)) =
+            // Check buffer size limit to prevent unbounded growth.
+            if pending.len() > MAX_PENDING_SIZE {
+                bail!("response too large ({} bytes)", pending.len());
+            }
+
+            if let Some((consumed, payload)) =
                 decode_frame(&pending).map_err(|e| anyhow::anyhow!("frame decode error: {e}"))?
             {
                 let response: JsonRpcResponse = serde_json::from_slice(&payload)?;
                 if let Some(err) = response.error {
                     bail!("server error {}: {}", err.code, err.message);
                 }
+                // Drain consumed bytes from pending buffer.
+                pending.drain(..consumed);
                 return Ok(response.result.unwrap_or(serde_json::Value::Null));
             }
         }

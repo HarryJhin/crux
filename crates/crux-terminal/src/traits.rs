@@ -262,6 +262,7 @@ mod tests {
             cols: 80,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 10_000,
         });
 
         mock.write_to_pty(b"hello");
@@ -280,6 +281,7 @@ mod tests {
             cols: 80,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 10_000,
         });
 
         let new_size = TerminalSize {
@@ -287,6 +289,7 @@ mod tests {
             cols: 100,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 10_000,
         };
         mock.resize(new_size);
 
@@ -304,6 +307,7 @@ mod tests {
             cols: 80,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 10_000,
         });
 
         assert_eq!(mock.cwd(), None);
@@ -321,6 +325,7 @@ mod tests {
             cols: 80,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 10_000,
         });
 
         assert_eq!(mock.selection_to_string(), None);
@@ -338,6 +343,7 @@ mod tests {
             cols: 80,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 10_000,
         });
 
         mock.push_event(TerminalEvent::Title("Test".into()));
@@ -362,6 +368,7 @@ mod tests {
             cols: 80,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 10_000,
         });
 
         assert!(mock.is_process_running());
@@ -380,6 +387,7 @@ mod tests {
             cols: 120,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 10_000,
         });
 
         let size = mock.size();

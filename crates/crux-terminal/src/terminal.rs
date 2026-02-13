@@ -25,11 +25,12 @@ pub struct TerminalSize {
     pub cols: usize,
     pub cell_width: f32,
     pub cell_height: f32,
+    pub scrollback_lines: usize,
 }
 
 impl Dimensions for TerminalSize {
     fn total_lines(&self) -> usize {
-        self.screen_lines() + SCROLLBACK_LINES
+        self.screen_lines() + self.scrollback_lines
     }
 
     fn screen_lines(&self) -> usize {
@@ -48,6 +49,7 @@ impl Default for TerminalSize {
             cols: 80,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: SCROLLBACK_LINES,
         }
     }
 }
@@ -152,9 +154,9 @@ impl CruxTerminal {
 
         let event_listener = CruxEventListener::new(event_tx.clone());
 
-        // Create alacritty_terminal Term with scrollback config.
+        // Create alacritty_terminal Term with scrollback config from TerminalSize.
         let config = Config {
-            scrolling_history: SCROLLBACK_LINES,
+            scrolling_history: size.scrollback_lines,
             ..Config::default()
         };
         let term = Term::new(config, &size, event_listener);
@@ -220,6 +222,7 @@ impl CruxTerminal {
         }
 
         // Then resize the alacritty terminal grid.
+        // Note: scrollback_lines is fixed at terminal creation time and cannot be changed.
         self.term.lock().resize(size);
     }
 
@@ -514,8 +517,10 @@ impl Drop for CruxTerminal {
         // 2. Wait briefly for graceful exit
         // 3. Force SIGKILL only if the child refuses to exit
         if let Some(pid) = self.child.process_id() {
+            // Safe cast: PIDs on macOS/Linux are always within i32 range.
+            let pid_i32 = i32::try_from(pid).expect("PID exceeds i32::MAX");
             unsafe {
-                libc::kill(pid as i32, libc::SIGHUP);
+                libc::kill(pid_i32, libc::SIGHUP);
             }
 
             // Give the child up to 500ms to exit gracefully.
@@ -567,9 +572,10 @@ mod tests {
             cols: 120,
             cell_width: 8.0,
             cell_height: 16.0,
+            scrollback_lines: 5000,
         };
         assert_eq!(size.columns(), 120);
         assert_eq!(size.screen_lines(), 40);
-        assert_eq!(size.total_lines(), 40 + SCROLLBACK_LINES);
+        assert_eq!(size.total_lines(), 40 + 5000);
     }
 }

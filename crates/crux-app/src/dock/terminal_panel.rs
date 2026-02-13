@@ -4,7 +4,7 @@ use std::path::Path;
 use gpui::*;
 use gpui_component::dock::{register_panel, Panel, PanelEvent, PanelInfo, PanelState};
 
-use crux_config::{ColorConfig, FontConfig};
+use crux_config::{ColorConfig, FontConfig, TerminalConfig};
 use crux_protocol::PaneId;
 use crux_terminal_view::CruxTerminalView;
 
@@ -26,6 +26,14 @@ pub fn register(cx: &mut App) {
                 }
                 _ => (PaneId(0), None),
             };
+
+            // TODO: Load config from disk instead of using defaults.
+            // Session restore currently uses default config because this is a static
+            // registration function. To use actual config, we would need to either:
+            // 1. Store FontConfig/ColorConfig/TerminalConfig in a static OnceLock
+            // 2. Refactor register_panel to accept config parameters
+            // 3. Store config in PanelState during dump() and restore it here
+            // For now, using defaults is acceptable for MVP.
             Box::new(
                 cx.new(|cx| {
                     CruxTerminalPanel::new(
@@ -35,6 +43,7 @@ pub fn register(cx: &mut App) {
                         None,
                         FontConfig::default(),
                         ColorConfig::default(),
+                        TerminalConfig::default(),
                         window,
                         cx,
                     )
@@ -64,6 +73,7 @@ impl CruxTerminalPanel {
         env: Option<&HashMap<String, String>>,
         font_config: FontConfig,
         color_config: ColorConfig,
+        terminal_config: TerminalConfig,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -76,7 +86,7 @@ impl CruxTerminalPanel {
         child_env.insert("TERM_PROGRAM".to_string(), "Crux".to_string());
 
         let terminal_view = cx.new(|cx| {
-            CruxTerminalView::new_with_options(cwd, command, Some(&child_env), font_config, color_config, cx)
+            CruxTerminalView::new_with_options(cwd, command, Some(&child_env), font_config, color_config, terminal_config, cx)
         });
 
         // Focus the inner terminal view so key events reach the PTY.
@@ -133,8 +143,19 @@ impl CruxTerminalPanel {
     /// Get the terminal text content and cursor position.
     pub fn get_text(&self, cx: &App) -> (Vec<String>, u32, u32) {
         let view = self.terminal_view.read(cx);
-        let lines = view.get_text_lines();
+        // Single snapshot call to avoid double content() invocation.
         let content = view.terminal_content_snapshot();
+
+        // Extract text lines from the snapshot.
+        let mut lines: Vec<String> = vec![String::new(); content.rows];
+        for cell in &content.cells {
+            let row = cell.point.line.0 as usize;
+            if row < content.rows {
+                lines[row].push(cell.c);
+            }
+        }
+        let lines: Vec<String> = lines.iter().map(|line| line.trim_end().to_string()).collect();
+
         (
             lines,
             content.cursor.point.line.0 as u32,
@@ -145,9 +166,20 @@ impl CruxTerminalPanel {
     /// Get a full snapshot of the terminal state (text + metadata).
     pub fn get_snapshot(&self, cx: &App) -> crux_protocol::GetSnapshotResult {
         let view = self.terminal_view.read(cx);
-        let lines = view.get_text_lines();
+        // Single snapshot call to avoid double content() invocation.
         let content = view.terminal_content_snapshot();
         let size = view.terminal_size();
+
+        // Extract text lines from the snapshot.
+        let mut lines: Vec<String> = vec![String::new(); content.rows];
+        for cell in &content.cells {
+            let row = cell.point.line.0 as usize;
+            if row < content.rows {
+                lines[row].push(cell.c);
+            }
+        }
+        let lines: Vec<String> = lines.iter().map(|line| line.trim_end().to_string()).collect();
+
         let cursor_shape = format!("{:?}", content.cursor.shape);
         crux_protocol::GetSnapshotResult {
             lines,

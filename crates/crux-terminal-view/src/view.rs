@@ -112,16 +112,22 @@ impl CruxTerminalView {
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
-        Self::new_with_options(None, None, None, FontConfig::default(), ColorConfig::default(), cx)
+        use crux_config::TerminalConfig;
+        Self::new_with_options(None, None, None, FontConfig::default(), ColorConfig::default(), TerminalConfig::default(), cx)
     }
 
     /// Create a new terminal view with optional cwd, command, and env.
+    ///
+    /// The `terminal_config` parameter provides shell, shell_args, env, and scrollback_lines.
+    /// If `command` is provided (from IPC), it overrides the config shell.
+    /// If `env` is provided (from IPC), it is merged with config env (IPC env takes precedence).
     pub fn new_with_options(
         cwd: Option<&str>,
         command: Option<&[String]>,
         env: Option<&std::collections::HashMap<String, String>>,
         font_config: FontConfig,
         color_config: ColorConfig,
+        terminal_config: crux_config::TerminalConfig,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -138,14 +144,28 @@ impl CruxTerminalView {
             cols: 80,
             cell_width: f32::from(cell_width),
             cell_height: f32::from(cell_height),
+            scrollback_lines: terminal_config.scrollback_lines,
         };
 
-        let terminal = match CruxTerminal::new(None, size, cwd, command, env) {
+        // Merge environment variables: config env + IPC env (IPC takes precedence).
+        let mut merged_env = terminal_config.env.clone();
+        if let Some(ipc_env) = env {
+            merged_env.extend(ipc_env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+
+        // Use command from IPC if provided, otherwise use config shell.
+        let shell = if command.is_none() {
+            terminal_config.shell.clone()
+        } else {
+            None
+        };
+
+        let terminal = match CruxTerminal::new(shell, size, cwd, command, Some(&merged_env)) {
             Ok(term) => term,
             Err(e) => {
                 log::error!("Failed to create terminal: {}. Using default shell.", e);
                 // Fall back to default shell without custom command
-                CruxTerminal::new(None, size, cwd, None, env)
+                CruxTerminal::new(None, size, cwd, None, Some(&merged_env))
                     .expect("Failed to create terminal even with default shell")
             }
         };
@@ -241,6 +261,7 @@ impl CruxTerminalView {
                 cols,
                 cell_width: f32::from(self.cell_width),
                 cell_height: f32::from(self.cell_height),
+                scrollback_lines: current.scrollback_lines,
             });
         }
     }
@@ -491,7 +512,8 @@ impl CruxTerminalView {
                 }
                 TerminalEvent::ProcessExit(code) => {
                     log::info!("child process exited with code {}", code);
-                    cx.quit();
+                    // Process exit should not quit the entire app in multi-pane scenarios.
+                    // The app layer or user decides when to close individual panes.
                 }
                 TerminalEvent::Wakeup => {}
                 TerminalEvent::CwdChanged(_) => {
@@ -608,8 +630,12 @@ impl CruxTerminalView {
             }
         }
 
-        // Trim trailing whitespace from each line
-        lines.iter().map(|line| line.trim_end().to_string()).collect()
+        // Trim trailing whitespace in-place (avoid allocating new strings).
+        for line in &mut lines {
+            let trimmed_len = line.trim_end().len();
+            line.truncate(trimmed_len);
+        }
+        lines
     }
 
     /// Get the terminal size.

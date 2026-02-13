@@ -73,6 +73,7 @@ pub async fn start_server(
                                             );
                                             continue;
                                         }
+                                        log::info!("client connected (UID {})", cred.uid());
                                     }
                                     Err(e) => {
                                         log::warn!("failed to get peer credentials: {e}");
@@ -92,8 +93,20 @@ pub async fn start_server(
 
                             let tx = cmd_tx.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_client(stream, tx).await {
-                                    log::debug!("client disconnected: {e}");
+                                // Wrap client handler with timeout.
+                                use tokio::time::{timeout, Duration};
+                                const CLIENT_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
+
+                                match timeout(CLIENT_TIMEOUT, handle_client(stream, tx)).await {
+                                    Ok(Ok(())) => {
+                                        log::debug!("client disconnected gracefully");
+                                    }
+                                    Ok(Err(e)) => {
+                                        log::debug!("client disconnected: {e}");
+                                    }
+                                    Err(_) => {
+                                        log::warn!("client timed out after {} seconds", CLIENT_TIMEOUT.as_secs());
+                                    }
                                 }
                                 drop(permit); // Release on disconnect.
                             });

@@ -19,6 +19,8 @@ pub struct CruxApp {
     pub(crate) dock_area: Entity<DockArea>,
     /// Kept for socket cleanup on drop.
     _socket_path: Option<std::path::PathBuf>,
+    /// IPC server cancellation token for graceful shutdown.
+    ipc_cancel: Option<crux_ipc::CancellationToken>,
     pub(crate) pane_registry: HashMap<PaneId, Entity<CruxTerminalPanel>>,
     next_pane_id: AtomicU64,
     /// Buffer of pane lifecycle events for future consumers (IPC notifications, etc.).
@@ -40,17 +42,17 @@ impl CruxApp {
         });
 
         // Start IPC server.
-        let (socket_path, ipc_rx) = match crux_ipc::start_ipc() {
-            Ok((path, rx, _cancel_token)) => {
+        let (socket_path, ipc_rx, ipc_cancel) = match crux_ipc::start_ipc() {
+            Ok((path, rx, cancel_token)) => {
                 log::info!("IPC server started at {}", path.display());
                 // SAFETY: Called during app initialization before any background threads are spawned.
                 // No concurrent readers of this environment variable exist at this point.
                 unsafe { std::env::set_var("CRUX_SOCKET", &path) };
-                (Some(path), Some(rx))
+                (Some(path), Some(rx), Some(cancel_token))
             }
             Err(e) => {
                 log::error!("Failed to start IPC server: {}", e);
-                (None, None)
+                (None, None, None)
             }
         };
 
@@ -76,6 +78,7 @@ impl CruxApp {
                     None,
                     config.font.clone(),
                     config.colors.clone(),
+                    config.terminal.clone(),
                     window,
                     cx,
                 )
@@ -110,6 +113,7 @@ impl CruxApp {
         Self {
             dock_area,
             _socket_path: socket_path,
+            ipc_cancel,
             pane_registry,
             next_pane_id: AtomicU64::new(1),
             pane_events: VecDeque::new(),
@@ -228,6 +232,7 @@ impl CruxApp {
                     None,
                     self.config.font.clone(),
                     self.config.colors.clone(),
+                    self.config.terminal.clone(),
                     window,
                     cx,
                 )
@@ -246,6 +251,7 @@ impl CruxApp {
                     None,
                     self.config.font.clone(),
                     self.config.colors.clone(),
+                    self.config.terminal.clone(),
                     window,
                     cx,
                 )
@@ -392,6 +398,7 @@ impl CruxApp {
                     None,
                     self.config.font.clone(),
                     self.config.colors.clone(),
+                    self.config.terminal.clone(),
                     window,
                     cx,
                 )
@@ -431,6 +438,7 @@ impl CruxApp {
                     None,
                     self.config.font.clone(),
                     self.config.colors.clone(),
+                    self.config.terminal.clone(),
                     window,
                     cx,
                 )
@@ -542,7 +550,7 @@ impl CruxApp {
     pub(crate) fn emit_pane_event(&mut self, event: PaneEvent) {
         const MAX_PANE_EVENTS: usize = 10_000;
         if self.pane_events.len() >= MAX_PANE_EVENTS {
-            // Remove oldest event to prevent unbounded growth.
+            log::warn!("pane event buffer full ({}), dropping oldest event", MAX_PANE_EVENTS);
             self.pane_events.pop_front();
         }
         self.pane_events.push_back(event);
@@ -740,12 +748,20 @@ impl Render for CruxApp {
 
 impl Drop for CruxApp {
     fn drop(&mut self) {
+        // Cancel IPC server gracefully
+        if let Some(cancel_token) = self.ipc_cancel.take() {
+            log::info!("Cancelling IPC server...");
+            cancel_token.cancel();
+        }
+
         if let Some(mut child) = self.mcp_process.take() {
             let pid = child.id();
             log::info!("Terminating MCP server (PID {pid})...");
             // Step 1: Send SIGTERM for graceful shutdown
+            // Safe cast: PIDs on macOS/Linux are always within i32 range.
+            let pid_i32 = i32::try_from(pid).expect("PID exceeds i32::MAX");
             unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+                libc::kill(pid_i32, libc::SIGTERM);
             }
             // Step 2: Wait up to 2 seconds
             for _ in 0..40 {
