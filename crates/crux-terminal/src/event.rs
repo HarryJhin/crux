@@ -1,6 +1,7 @@
 use std::sync::mpsc;
 
 use alacritty_terminal::event::{Event as AlacEvent, EventListener};
+use alacritty_terminal::vte::ansi::CursorShape;
 
 /// Semantic zone types from OSC 133 (FinalTerm) shell integration.
 ///
@@ -59,6 +60,11 @@ pub enum TerminalEvent {
     },
     /// Program requested clipboard write via OSC 52.
     ClipboardSet { data: String },
+    /// Cursor shape changed (e.g. Vim mode switch detected via DECSCUSR).
+    CursorShapeChanged {
+        old_shape: CursorShape,
+        new_shape: CursorShape,
+    },
 }
 
 /// Bridges alacritty_terminal events into our channel-based system.

@@ -2,6 +2,7 @@
 
 mod colors;
 mod element;
+mod ime_switch;
 mod input;
 mod mouse;
 mod view;

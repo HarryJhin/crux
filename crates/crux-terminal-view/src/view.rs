@@ -88,6 +88,12 @@ pub struct CruxTerminalView {
     ///
     /// Cleared when the user presses Enter, arrow keys, or other non-text keys.
     ime_buffer: String,
+    /// Timestamp when IME composition started, for stale preedit detection.
+    marked_text_timestamp: Option<Instant>,
+    /// Whether Vim IME auto-switch is enabled.
+    vim_ime_switch: bool,
+    /// The input source that was active before switching to ASCII.
+    saved_input_source: Option<String>,
 }
 
 /// Alias for GPUI's 2D point to avoid confusion with alacritty's grid Point.
@@ -173,6 +179,9 @@ impl CruxTerminalView {
             marked_text_selected_range: None,
             last_ime_commit: None,
             ime_buffer: String::new(),
+            marked_text_timestamp: None,
+            vim_ime_switch: false,
+            saved_input_source: None,
         }
     }
 
@@ -694,11 +703,39 @@ impl CruxTerminalView {
                 TerminalEvent::ClipboardSet { data } => {
                     cx.write_to_clipboard(ClipboardItem::new_string(data));
                 }
+                TerminalEvent::CursorShapeChanged { old_shape, new_shape } => {
+                    if self.vim_ime_switch {
+                        use crux_terminal::CursorShape;
+                        let entering_normal = matches!(new_shape, CursorShape::Block)
+                            && !matches!(old_shape, CursorShape::Block);
+                        if entering_normal {
+                            #[cfg(target_os = "macos")]
+                            {
+                                self.saved_input_source = crate::ime_switch::current_input_source();
+                                crate::ime_switch::switch_to_ascii();
+                            }
+                        }
+                    }
+                }
             }
         }
         // Mark dirty if we received any events.
         if had_events {
             self.dirty = true;
+        }
+
+        // Force-commit stale IME composition after 5 seconds.
+        if let Some(ts) = self.marked_text_timestamp {
+            if ts.elapsed() > Duration::from_secs(5) {
+                log::warn!("[IME] force-committing stale composition after 5s timeout");
+                if let Some(text) = self.marked_text.take() {
+                    let normalized: String = text.nfc().collect();
+                    self.terminal.write_to_pty(normalized.as_bytes());
+                }
+                self.marked_text_selected_range = None;
+                self.marked_text_timestamp = None;
+                cx.notify();
+            }
         }
     }
 
@@ -952,6 +989,7 @@ impl EntityInputHandler for CruxTerminalView {
     fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
         self.marked_text = None;
         self.marked_text_selected_range = None;
+        self.marked_text_timestamp = None;
     }
 
     fn replace_text_in_range(
@@ -970,6 +1008,7 @@ impl EntityInputHandler for CruxTerminalView {
         // Clear composition state — this is a commit.
         self.marked_text = None;
         self.marked_text_selected_range = None;
+        self.marked_text_timestamp = None;
 
         if !text.is_empty() {
             // Dedup: some CJK input methods fire duplicate insertText: calls
@@ -1080,6 +1119,11 @@ impl EntityInputHandler for CruxTerminalView {
             self.marked_text = Some(normalized);
             self.marked_text_selected_range = new_selected_range;
         }
+        self.marked_text_timestamp = if self.marked_text.is_some() {
+            Some(Instant::now())
+        } else {
+            None
+        };
 
         self.reset_cursor_blink();
         cx.notify();

@@ -123,6 +123,8 @@ pub struct CruxTerminal {
     current_zone_start_line: i32,
     /// Column where the current zone started.
     current_zone_start_col: usize,
+    /// Last observed cursor shape, for detecting Vim mode transitions.
+    last_cursor_shape: CursorShape,
 }
 
 impl CruxTerminal {
@@ -186,6 +188,7 @@ impl CruxTerminal {
             current_zone_type: None,
             current_zone_start_line: 0,
             current_zone_start_col: 0,
+            last_cursor_shape: CursorShape::Block,
         })
     }
 
@@ -334,6 +337,17 @@ impl CruxTerminal {
             }
             events.push(event);
         }
+
+        // Check cursor shape change after processing PTY output.
+        let current_shape = self.term.lock().cursor_style().shape;
+        if current_shape != self.last_cursor_shape {
+            events.push(TerminalEvent::CursorShapeChanged {
+                old_shape: self.last_cursor_shape,
+                new_shape: current_shape,
+            });
+            self.last_cursor_shape = current_shape;
+        }
+
         events
     }
 
