@@ -426,7 +426,7 @@ Based on failure analysis of Alacritty, Ghostty, WezTerm:
 - [x] Register for drag types via GPUI's built-in `on_drop`/`drag_over` API
   - GPUI handles `NSDraggingDestination` internally
 - [x] File drop: insert file path as text into PTY (shell-escaped, bracketed paste)
-- [ ] Image drop: save to temp file, handle like clipboard image (deferred -- requires NSView subclassing beyond GPUI's `ExternalPaths` API)
+- [x] Image drop: GPUI patched to extract PNG/TIFF from drag pasteboard, save to temp file, return as ExternalPaths
 - [x] Visual drop indicator (highlight pane border -- blue border)
 
 ### 3.6 Crux Protocol -- Clipboard & IME (P1)

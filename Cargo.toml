@@ -57,6 +57,7 @@ clap = { version = "4", features = ["derive"] }
 core-text = "=21.0.0"
 
 [patch.crates-io]
+gpui = { path = "patches/gpui" }
 gpui-component = { path = "patches/gpui-component" }
 
 [profile.release]
