@@ -19,22 +19,7 @@ pub struct CruxMcpServer {
 
 impl CruxMcpServer {
     pub fn new(ipc: IpcClient) -> Self {
-        let ipc: Arc<dyn IpcTransport> = Arc::new(ipc);
-        let tool_router = crate::tools::pane::router()
-            + crate::tools::command::router()
-            + crate::tools::state::router()
-            + crate::tools::content::router();
-
-        // Rate limiter: 20 requests per second with burst of 40
-        let quota = Quota::per_second(std::num::NonZeroU32::new(20).unwrap())
-            .allow_burst(std::num::NonZeroU32::new(40).unwrap());
-        let rate_limiter = Arc::new(RateLimiter::direct(quota));
-
-        Self {
-            ipc,
-            tool_router,
-            rate_limiter,
-        }
+        Self::new_from_arc(Arc::new(ipc))
     }
 
     pub fn new_from_arc(ipc: Arc<dyn IpcTransport>) -> Self {

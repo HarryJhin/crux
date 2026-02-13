@@ -211,10 +211,10 @@ impl CruxTerminal {
 
         // Resize PTY first so the child process gets SIGWINCH before grid changes.
         if let Err(e) = self.master_pty.resize(portable_pty::PtySize {
-            rows: size.rows as u16,
-            cols: size.cols as u16,
-            pixel_width: (size.cols as f32 * size.cell_width) as u16,
-            pixel_height: (size.rows as f32 * size.cell_height) as u16,
+            rows: u16::try_from(size.rows).unwrap_or(u16::MAX),
+            cols: u16::try_from(size.cols).unwrap_or(u16::MAX),
+            pixel_width: u16::try_from((size.cols as f32 * size.cell_width) as usize).unwrap_or(u16::MAX),
+            pixel_height: u16::try_from((size.rows as f32 * size.cell_height) as usize).unwrap_or(u16::MAX),
         }) {
             log::warn!("failed to resize PTY: {}", e);
         }

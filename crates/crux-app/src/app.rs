@@ -8,6 +8,7 @@ use gpui_component::dock::{
 };
 use gpui_component::Placement;
 
+use crux_config::CruxConfig;
 use crux_protocol::{PaneEvent, PaneId};
 
 use crate::actions::*;
@@ -26,10 +27,19 @@ pub struct CruxApp {
     pub(crate) pane_parents: HashMap<PaneId, PaneId>,
     /// Background MCP server process.
     mcp_process: Option<std::process::Child>,
+    /// Application configuration loaded from config file.
+    #[allow(dead_code)]
+    pub(crate) config: CruxConfig,
 }
 
 impl CruxApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // Load configuration early.
+        let config = CruxConfig::load().unwrap_or_else(|e| {
+            log::warn!("Failed to load config: {}, using defaults", e);
+            CruxConfig::default()
+        });
+
         // Start IPC server.
         let (socket_path, ipc_rx) = match crux_ipc::start_ipc() {
             Ok((path, rx, _cancel_token)) => {
@@ -95,6 +105,7 @@ impl CruxApp {
             pane_events: Vec::new(),
             pane_parents: HashMap::new(),
             mcp_process,
+            config,
         }
     }
 
@@ -144,6 +155,12 @@ impl CruxApp {
     }
 
     // -- Helpers --------------------------------------------------------
+
+    /// Get a reference to the application configuration.
+    #[allow(dead_code)]
+    pub fn config(&self) -> &CruxConfig {
+        &self.config
+    }
 
     /// Collect all TabPanel entities from the DockItem tree in depth-first order.
     pub(crate) fn collect_tab_panels(item: &DockItem) -> Vec<Entity<TabPanel>> {
@@ -464,6 +481,11 @@ impl CruxApp {
 
     /// Push a pane lifecycle event into the buffer.
     pub(crate) fn emit_pane_event(&mut self, event: PaneEvent) {
+        const MAX_PANE_EVENTS: usize = 10_000;
+        if self.pane_events.len() >= MAX_PANE_EVENTS {
+            // Remove oldest event to prevent unbounded growth.
+            self.pane_events.remove(0);
+        }
         self.pane_events.push(event);
     }
 

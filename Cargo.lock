@@ -1496,6 +1496,7 @@ dependencies = [
  "clap",
  "core-text",
  "crux-clipboard",
+ "crux-config",
  "crux-ipc",
  "crux-protocol",
  "crux-terminal-view",

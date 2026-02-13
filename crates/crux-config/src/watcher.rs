@@ -79,7 +79,7 @@ impl ConfigWatcher {
                         });
 
                         if config_changed {
-                            let event = match CruxConfig::load_from(&config_path_for_closure) {
+                            let event = match CruxConfig::load_from(config_path_for_closure.as_path()) {
                                 Ok(config) => ConfigEvent::Reloaded(Box::new(config)),
                                 Err(e) => ConfigEvent::Error(e),
                             };

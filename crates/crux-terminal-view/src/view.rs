@@ -136,8 +136,15 @@ impl CruxTerminalView {
             cell_height: f32::from(cell_height),
         };
 
-        let terminal =
-            CruxTerminal::new(None, size, cwd, command, env).expect("failed to create terminal");
+        let terminal = match CruxTerminal::new(None, size, cwd, command, env) {
+            Ok(term) => term,
+            Err(e) => {
+                log::error!("Failed to create terminal: {}. Using default shell.", e);
+                // Fall back to default shell without custom command
+                CruxTerminal::new(None, size, cwd, None, env)
+                    .expect("Failed to create terminal even with default shell")
+            }
+        };
 
         // Periodic refresh at ~60fps to pick up PTY output and handle cursor blink.
         cx.spawn(async |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
@@ -266,7 +273,8 @@ impl CruxTerminalView {
         self.reset_cursor_blink();
 
         let grid_point = self.pixel_to_grid(event.position);
-        let mode = self.terminal.content().mode;
+        let content = self.terminal.content();
+        let mode = content.mode;
 
         // If mouse mode is active and Shift is not held, report to PTY.
         if mouse::mouse_mode_active(mode, event.modifiers.shift) {
@@ -281,7 +289,7 @@ impl CruxTerminalView {
 
         // Normal selection handling.
         let side = self.pixel_to_side(event.position);
-        let display_offset = self.terminal.content().display_offset;
+        let display_offset = content.display_offset;
         let abs_point = Point::new(
             Line(grid_point.line.0 - display_offset as i32),
             grid_point.column,
@@ -307,7 +315,8 @@ impl CruxTerminalView {
         cx: &mut Context<Self>,
     ) {
         let grid_point = self.pixel_to_grid(event.position);
-        let mode = self.terminal.content().mode;
+        let content = self.terminal.content();
+        let mode = content.mode;
 
         // Mouse mode reporting for motion events.
         if mouse::mouse_mode_active(mode, false) {
@@ -346,7 +355,7 @@ impl CruxTerminalView {
         }
 
         let side = self.pixel_to_side(event.position);
-        let display_offset = self.terminal.content().display_offset;
+        let display_offset = content.display_offset;
         let abs_point = Point::new(
             Line(grid_point.line.0 - display_offset as i32),
             grid_point.column,
@@ -583,17 +592,18 @@ impl CruxTerminalView {
     /// Get terminal grid content as text lines.
     pub fn get_text_lines(&self) -> Vec<String> {
         let content = self.terminal.content();
-        let mut lines: Vec<String> = Vec::with_capacity(content.rows);
-        for row in 0..content.rows {
-            let mut line = String::new();
-            for cell in &content.cells {
-                if cell.point.line.0 == row as i32 {
-                    line.push(cell.c);
-                }
+        let mut lines: Vec<String> = vec![String::new(); content.rows];
+
+        // Single-pass collection: O(cells) instead of O(rows * cells)
+        for cell in &content.cells {
+            let row = cell.point.line.0 as usize;
+            if row < content.rows {
+                lines[row].push(cell.c);
             }
-            lines.push(line.trim_end().to_string());
         }
-        lines
+
+        // Trim trailing whitespace from each line
+        lines.iter().map(|line| line.trim_end().to_string()).collect()
     }
 
     /// Get the terminal size.

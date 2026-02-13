@@ -109,10 +109,10 @@ pub fn spawn_pty(
 )> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
-        rows: size.rows as u16,
-        cols: size.cols as u16,
-        pixel_width: (size.cols as f32 * size.cell_width) as u16,
-        pixel_height: (size.rows as f32 * size.cell_height) as u16,
+        rows: u16::try_from(size.rows).unwrap_or(u16::MAX),
+        cols: u16::try_from(size.cols).unwrap_or(u16::MAX),
+        pixel_width: u16::try_from((size.cols as f32 * size.cell_width) as usize).unwrap_or(u16::MAX),
+        pixel_height: u16::try_from((size.rows as f32 * size.cell_height) as usize).unwrap_or(u16::MAX),
     })?;
 
     let mut cmd = if let Some(args) = command {

@@ -14,7 +14,7 @@ pub mod watcher;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -56,7 +56,7 @@ impl CruxConfig {
     /// Load configuration from a specific path.
     ///
     /// Returns default configuration if the file doesn't exist.
-    pub fn load_from(path: &PathBuf) -> Result<Self, ConfigError> {
+    pub fn load_from(path: &Path) -> Result<Self, ConfigError> {
         if !path.exists() {
             log::info!(
                 "No config file found at {}, using defaults",

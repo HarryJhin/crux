@@ -181,7 +181,7 @@ impl CruxApp {
                             is_active: self.is_pane_active(*id, window, cx),
                             is_zoomed: false,
                             cursor_x: content.cursor.point.column.0 as u32,
-                            cursor_y: content.cursor.point.line.0 as u32,
+                            cursor_y: content.cursor.point.line.0.max(0) as u32,
                             tty: None,
                             pid: None,
                         }

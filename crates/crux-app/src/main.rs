@@ -24,6 +24,12 @@ fn main() {
     // Otherwise, start the GUI application.
     crux_terminal_view::ensure_terminfo_installed();
 
+    // Load config for window dimensions.
+    let config = crux_config::CruxConfig::load().unwrap_or_else(|e| {
+        eprintln!("warning: failed to load config: {}, using defaults", e);
+        crux_config::CruxConfig::default()
+    });
+
     let application = Application::new().with_assets(gpui_component_assets::Assets);
     application.run(move |cx: &mut App| {
         gpui_component::init(cx);
@@ -62,7 +68,7 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: point(px(0.0), px(0.0)),
-                    size: size(px(800.0), px(600.0)),
+                    size: size(px(config.window.width), px(config.window.height)),
                 })),
                 ..Default::default()
             },

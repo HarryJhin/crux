@@ -57,16 +57,13 @@ impl CruxTerminalPanel {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        // SAFETY: Called from main thread during panel creation.
-        // CRUX_PANE is only read by child processes spawned after this point.
-        // GPUI runs on the macOS main thread exclusively, so no concurrent
-        // readers of these environment variables exist.
-        unsafe {
-            std::env::set_var("CRUX_PANE", pane_id.0.to_string());
-            std::env::set_var("TERM_PROGRAM", "Crux");
-        }
+        // Build environment variables for the child process.
+        // Merge user-provided env with CRUX_PANE and TERM_PROGRAM.
+        let mut child_env = env.cloned().unwrap_or_default();
+        child_env.insert("CRUX_PANE".to_string(), pane_id.0.to_string());
+        child_env.insert("TERM_PROGRAM".to_string(), "Crux".to_string());
 
-        let terminal_view = cx.new(|cx| CruxTerminalView::new_with_options(cwd, command, env, cx));
+        let terminal_view = cx.new(|cx| CruxTerminalView::new_with_options(cwd, command, Some(&child_env), cx));
 
         // Focus the inner terminal view so key events reach the PTY.
         let inner_focus = terminal_view.read(cx).focus_handle(cx);

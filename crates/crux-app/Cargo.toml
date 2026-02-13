@@ -17,6 +17,7 @@ crux-terminal-view.workspace = true
 crux-clipboard.workspace = true
 crux-protocol.workspace = true
 crux-ipc.workspace = true
+crux-config.workspace = true
 log.workspace = true
 env_logger.workspace = true
 core-text.workspace = true
