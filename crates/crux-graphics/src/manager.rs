@@ -15,6 +15,12 @@ const DEFAULT_QUOTA_BYTES: usize = 320 * 1024 * 1024;
 /// Maximum single image size: 64 MiB.
 const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Maximum number of pending chunked transfers to prevent resource exhaustion.
+const MAX_PENDING_CHUNKS: usize = 32;
+
+/// Maximum accumulated size for a single chunked transfer: 64 MiB.
+const MAX_CHUNK_ACCUMULATION: usize = 64 * 1024 * 1024;
+
 /// Internal record for a stored image.
 #[derive(Debug)]
 struct StoredImage {
@@ -244,11 +250,39 @@ impl ImageManager {
     }
 
     /// Append a chunk of data for a chunked transfer.
-    pub fn append_chunk(&mut self, image_id: u32, data: &[u8]) {
-        self.pending_chunks
-            .entry(image_id)
-            .or_default()
-            .extend_from_slice(data);
+    ///
+    /// Returns an error if the pending chunks limit is exceeded or the
+    /// accumulated data for this transfer exceeds the maximum chunk size.
+    pub fn append_chunk(&mut self, image_id: u32, data: &[u8]) -> Result<(), GraphicsError> {
+        // Check if we're at the pending chunks limit
+        if !self.pending_chunks.contains_key(&image_id)
+            && self.pending_chunks.len() >= MAX_PENDING_CHUNKS
+        {
+            // Drop the oldest pending transfer (first key in iteration order)
+            if let Some(&oldest_id) = self.pending_chunks.keys().next() {
+                log::warn!(
+                    "dropping oldest pending chunked transfer (id={}) due to pending chunks limit",
+                    oldest_id
+                );
+                self.pending_chunks.remove(&oldest_id);
+            }
+        }
+
+        let accumulated = self.pending_chunks.entry(image_id).or_default();
+
+        // Check accumulated size before adding new chunk
+        let new_size = accumulated.len() + data.len();
+        if new_size > MAX_CHUNK_ACCUMULATION {
+            let size = new_size; // Capture before removing
+            self.pending_chunks.remove(&image_id);
+            return Err(GraphicsError::ImageTooLarge {
+                size,
+                max: MAX_CHUNK_ACCUMULATION,
+            });
+        }
+
+        accumulated.extend_from_slice(data);
+        Ok(())
     }
 
     /// Complete a chunked transfer, returning the accumulated data.
@@ -456,9 +490,9 @@ mod tests {
     #[test]
     fn test_chunked_transfer() {
         let mut mgr = ImageManager::new();
-        mgr.append_chunk(1, b"AAAA");
+        mgr.append_chunk(1, b"AAAA").unwrap();
         assert!(mgr.has_pending_chunks(1));
-        mgr.append_chunk(1, b"BBBB");
+        mgr.append_chunk(1, b"BBBB").unwrap();
 
         let data = mgr.complete_chunked_transfer(1).unwrap();
         assert_eq!(data, b"AAAABBBB");

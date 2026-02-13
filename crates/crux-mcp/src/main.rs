@@ -30,6 +30,8 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+    // Note: CRUX_SOCKET env var is set here for potential child processes that may need
+    // to discover the socket path. The MCP server itself uses args.socket internally.
     if let Some(ref socket) = args.socket {
         // SAFETY: single-threaded at this point, before any IPC connection.
         unsafe { std::env::set_var("CRUX_SOCKET", socket) };

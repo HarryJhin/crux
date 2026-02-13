@@ -77,7 +77,7 @@ fn main() {
                 cx.new(|cx| gpui_component::Root::new(view, window, cx))
             },
         )
-        .unwrap();
+        .expect("Failed to open main window — is Metal/display available?");
     });
 }
 

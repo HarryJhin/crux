@@ -223,7 +223,7 @@ pub fn start_pty_read_loop(
                 wakeup();
             }
         })
-        .expect("failed to spawn PTY reader thread")
+        .expect("failed to spawn PTY reader thread: system resource exhaustion or invalid thread configuration")
 }
 
 /// Ensure the xterm-crux terminfo is installed on the system.

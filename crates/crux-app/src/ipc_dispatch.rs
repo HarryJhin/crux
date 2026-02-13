@@ -54,8 +54,8 @@ impl CruxApp {
                         params.cwd.as_deref(),
                         params.command.as_deref(),
                         params.env.as_ref(),
-                        crux_config::FontConfig::default(),
-                        crux_config::ColorConfig::default(),
+                        self.config.font.clone(),
+                        self.config.colors.clone(),
                         window,
                         cx,
                     )
@@ -349,12 +349,18 @@ impl CruxApp {
                             }
                             "image" => {
                                 if let Some(path) = &params.image_path {
-                                    match std::fs::read(path) {
-                                        Ok(data) => {
-                                            crux_clipboard::Clipboard::write_image(&data, mtm)
-                                                .map_err(|e| anyhow::anyhow!("{e}"))
+                                    let path_obj = std::path::Path::new(path);
+                                    let ext = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
+                                    if !matches!(ext.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff") {
+                                        Err(anyhow::anyhow!("image path must have a valid image extension"))
+                                    } else {
+                                        match std::fs::read(path) {
+                                            Ok(data) => {
+                                                crux_clipboard::Clipboard::write_image(&data, mtm)
+                                                    .map_err(|e| anyhow::anyhow!("{e}"))
+                                            }
+                                            Err(e) => Err(anyhow::anyhow!("failed to read image: {e}")),
                                         }
-                                        Err(e) => Err(anyhow::anyhow!("failed to read image: {e}")),
                                     }
                                 } else {
                                     Err(anyhow::anyhow!(
@@ -477,24 +483,17 @@ impl CruxApp {
 
         let items = self.dock_area.read(cx).items().clone();
 
-        // Try width resize (horizontal split axis)
-        if let Some(w) = width {
+        if width.is_some() || height.is_some() {
             if let Some((stack_panel, ix)) =
                 Self::find_stack_panel_containing(&items, &target_view, cx)
             {
                 stack_panel.update(cx, |sp, cx| {
-                    sp.resize_panel_at(ix, px(w), window, cx);
-                });
-            }
-        }
-
-        // Try height resize (vertical split axis)
-        if let Some(h) = height {
-            if let Some((stack_panel, ix)) =
-                Self::find_stack_panel_containing(&items, &target_view, cx)
-            {
-                stack_panel.update(cx, |sp, cx| {
-                    sp.resize_panel_at(ix, px(h), window, cx);
+                    if let Some(w) = width {
+                        sp.resize_panel_at(ix, px(w), window, cx);
+                    }
+                    if let Some(h) = height {
+                        sp.resize_panel_at(ix, px(h), window, cx);
+                    }
                 });
             }
         }
@@ -510,11 +509,25 @@ impl CruxApp {
         target: &Arc<dyn PanelView>,
         cx: &App,
     ) -> Option<(Entity<StackPanel>, usize)> {
+        Self::find_stack_panel_containing_recursive(item, target, cx, 0)
+    }
+
+    fn find_stack_panel_containing_recursive(
+        item: &DockItem,
+        target: &Arc<dyn PanelView>,
+        cx: &App,
+        depth: usize,
+    ) -> Option<(Entity<StackPanel>, usize)> {
+        const MAX_DOCK_DEPTH: usize = 100;
+        if depth > MAX_DOCK_DEPTH {
+            log::warn!("find_stack_panel_containing: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
+            return None;
+        }
         match item {
             DockItem::Split { items, view, .. } => {
                 // Check each child to see if it contains the target pane.
                 for (ix, child) in items.iter().enumerate() {
-                    if Self::dock_item_contains_pane(child, target, cx) {
+                    if Self::dock_item_contains_pane(child, target, cx, 0) {
                         // If the child directly contains the pane (e.g. it's a Tabs),
                         // return this split + index.
                         match child {
@@ -524,7 +537,7 @@ impl CruxApp {
                             DockItem::Split { .. } => {
                                 // Recurse into nested splits — the pane might be deeper.
                                 if let Some(result) =
-                                    Self::find_stack_panel_containing(child, target, cx)
+                                    Self::find_stack_panel_containing_recursive(child, target, cx, depth + 1)
                                 {
                                     return Some(result);
                                 }
@@ -542,12 +555,17 @@ impl CruxApp {
     }
 
     /// Check if a DockItem (recursively) contains the target pane view.
-    fn dock_item_contains_pane(item: &DockItem, target: &Arc<dyn PanelView>, _cx: &App) -> bool {
+    fn dock_item_contains_pane(item: &DockItem, target: &Arc<dyn PanelView>, _cx: &App, depth: usize) -> bool {
+        const MAX_DOCK_DEPTH: usize = 100;
+        if depth > MAX_DOCK_DEPTH {
+            log::warn!("dock_item_contains_pane: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
+            return false;
+        }
         match item {
             DockItem::Tabs { items, .. } => items.iter().any(|panel| panel.view() == target.view()),
             DockItem::Split { items, .. } => items
                 .iter()
-                .any(|child| Self::dock_item_contains_pane(child, target, _cx)),
+                .any(|child| Self::dock_item_contains_pane(child, target, _cx, depth + 1)),
             DockItem::Panel { view, .. } => view.view() == target.view(),
             _ => false,
         }

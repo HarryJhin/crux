@@ -175,18 +175,23 @@ impl CruxApp {
     /// Collect all TabPanel entities from the DockItem tree in depth-first order.
     pub(crate) fn collect_tab_panels(item: &DockItem) -> Vec<Entity<TabPanel>> {
         let mut result = Vec::new();
-        Self::collect_tab_panels_recursive(item, &mut result);
+        Self::collect_tab_panels_recursive(item, &mut result, 0);
         result
     }
 
-    fn collect_tab_panels_recursive(item: &DockItem, out: &mut Vec<Entity<TabPanel>>) {
+    fn collect_tab_panels_recursive(item: &DockItem, out: &mut Vec<Entity<TabPanel>>, depth: usize) {
+        const MAX_DOCK_DEPTH: usize = 100;
+        if depth > MAX_DOCK_DEPTH {
+            log::warn!("collect_tab_panels_recursive: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
+            return;
+        }
         match item {
             DockItem::Tabs { view, .. } => {
                 out.push(view.clone());
             }
             DockItem::Split { items, .. } => {
                 for child in items {
-                    Self::collect_tab_panels_recursive(child, out);
+                    Self::collect_tab_panels_recursive(child, out, depth + 1);
                 }
             }
             _ => {}
@@ -577,7 +582,7 @@ impl CruxApp {
 
     /// Default session file path: `~/.config/crux/session.json`.
     fn default_session_path() -> std::path::PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         std::path::PathBuf::from(home)
             .join(".config")
             .join("crux")
@@ -649,6 +654,15 @@ impl CruxApp {
     /// Walk the DockItem tree and collect all CruxTerminalPanel entities
     /// into the pane_registry.
     fn collect_panes_from_dock_item(&mut self, item: &DockItem, cx: &App) {
+        self.collect_panes_from_dock_item_recursive(item, cx, 0);
+    }
+
+    fn collect_panes_from_dock_item_recursive(&mut self, item: &DockItem, cx: &App, depth: usize) {
+        const MAX_DOCK_DEPTH: usize = 100;
+        if depth > MAX_DOCK_DEPTH {
+            log::warn!("collect_panes_from_dock_item: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
+            return;
+        }
         match item {
             DockItem::Tabs { items, .. } => {
                 for panel_view in items {
@@ -660,7 +674,7 @@ impl CruxApp {
             }
             DockItem::Split { items, .. } => {
                 for child in items {
-                    self.collect_panes_from_dock_item(child, cx);
+                    self.collect_panes_from_dock_item_recursive(child, cx, depth + 1);
                 }
             }
             DockItem::Panel { view, .. } => {

@@ -27,7 +27,8 @@ impl CruxMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let mut p = serde_json::json!({ "pane_id": params.pane_id });
         if let Some(n) = params.lines {
-            p["start_line"] = serde_json::json!(-(n as i32));
+            let n_clamped = n.min(i32::MAX as u32) as i32;
+            p["start_line"] = serde_json::json!(-n_clamped);
         }
         let result = self
             .ipc_call(crux_protocol::method::PANE_GET_TEXT, p)

@@ -99,13 +99,13 @@ pub mod mock {
         /// Events to drain from drain_events()
         pub mock_events: RefCell<Vec<TerminalEvent>>,
         /// CWD to return from cwd()
-        pub mock_cwd: RefCell<Option<String>>,
+        pub mock_cwd: Option<String>,
         /// Size to return from size()
-        pub mock_size: RefCell<TerminalSize>,
+        pub mock_size: TerminalSize,
         /// Selection text to return from selection_to_string()
         pub mock_selection: RefCell<Option<String>>,
         /// Semantic zones to return from semantic_zones()
-        pub mock_zones: RefCell<Vec<SemanticZone>>,
+        pub mock_zones: Vec<SemanticZone>,
         /// Process running state
         pub mock_process_running: RefCell<bool>,
         /// Child PID
@@ -120,10 +120,10 @@ pub mod mock {
             Self {
                 written_data: RefCell::new(Vec::new()),
                 mock_events: RefCell::new(Vec::new()),
-                mock_cwd: RefCell::new(None),
-                mock_size: RefCell::new(size),
+                mock_cwd: None,
+                mock_size: size,
                 mock_selection: RefCell::new(None),
-                mock_zones: RefCell::new(Vec::new()),
+                mock_zones: Vec::new(),
                 mock_process_running: RefCell::new(true),
                 mock_child_pid: RefCell::new(Some(12345)),
                 write_count: RefCell::new(0),
@@ -141,8 +141,8 @@ pub mod mock {
         }
 
         /// Set the CWD that will be returned by cwd().
-        pub fn set_cwd(&self, cwd: Option<String>) {
-            *self.mock_cwd.borrow_mut() = cwd;
+        pub fn set_cwd(&mut self, cwd: Option<String>) {
+            self.mock_cwd = cwd;
         }
 
         /// Set the selection text that will be returned by selection_to_string().
@@ -168,11 +168,10 @@ pub mod mock {
         }
 
         fn resize(&mut self, size: TerminalSize) {
-            *self.mock_size.borrow_mut() = size;
+            self.mock_size = size;
         }
 
         fn content(&self) -> TerminalContent {
-            let size = *self.mock_size.borrow();
             TerminalContent {
                 cells: Vec::new(),
                 cursor: CursorState {
@@ -182,8 +181,8 @@ pub mod mock {
                 mode: TermMode::empty(),
                 display_offset: 0,
                 selection: None,
-                cols: size.cols,
-                rows: size.rows,
+                cols: self.mock_size.cols,
+                rows: self.mock_size.rows,
                 damage: DamageState::default(),
             }
         }
@@ -193,19 +192,11 @@ pub mod mock {
         }
 
         fn cwd(&self) -> Option<&str> {
-            // SAFETY: This is unsafe but necessary for the mock.
-            // The reference is valid as long as the MockTerminal lives.
-            // In production code, consider using a different API.
-            unsafe {
-                self.mock_cwd
-                    .borrow()
-                    .as_ref()
-                    .map(|s| std::mem::transmute::<&str, &str>(s.as_str()))
-            }
+            self.mock_cwd.as_deref()
         }
 
         fn size(&self) -> TerminalSize {
-            *self.mock_size.borrow()
+            self.mock_size
         }
 
         fn scroll_display(&self, _scroll: Scroll) {
@@ -217,12 +208,7 @@ pub mod mock {
         }
 
         fn semantic_zones(&self) -> &[SemanticZone] {
-            // SAFETY: This is unsafe but necessary for the mock.
-            // The reference is valid as long as the MockTerminal lives.
-            unsafe {
-                let zones = self.mock_zones.borrow();
-                std::mem::transmute::<&[SemanticZone], &[SemanticZone]>(zones.as_slice())
-            }
+            &self.mock_zones
         }
 
         fn is_process_running(&mut self) -> bool {
@@ -239,8 +225,7 @@ pub mod mock {
         {
             // Create a temporary term for testing
             use alacritty_terminal::term::test::TermSize;
-            let size = *self.mock_size.borrow();
-            let term_size = TermSize::new(size.cols as usize, size.rows as usize);
+            let term_size = TermSize::new(self.mock_size.cols as usize, self.mock_size.rows as usize);
             let term = Term::new(Config::default(), &term_size, {
                 let (tx, _rx) = std::sync::mpsc::channel();
                 CruxEventListener::new(tx)
@@ -254,8 +239,7 @@ pub mod mock {
         {
             // Create a temporary term for testing
             use alacritty_terminal::term::test::TermSize;
-            let size = *self.mock_size.borrow();
-            let term_size = TermSize::new(size.cols as usize, size.rows as usize);
+            let term_size = TermSize::new(self.mock_size.cols as usize, self.mock_size.rows as usize);
             let mut term = Term::new(Config::default(), &term_size, {
                 let (tx, _rx) = std::sync::mpsc::channel();
                 CruxEventListener::new(tx)
@@ -315,7 +299,7 @@ mod tests {
     fn test_mock_terminal_cwd() {
         use mock::MockTerminal;
 
-        let mock = MockTerminal::new(TerminalSize {
+        let mut mock = MockTerminal::new(TerminalSize {
             rows: 24,
             cols: 80,
             cell_width: 8.0,
