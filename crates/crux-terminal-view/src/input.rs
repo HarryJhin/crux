@@ -170,6 +170,7 @@ fn cursor_key(letter: u8, mods: u8, app_cursor: bool) -> Vec<u8> {
     } else {
         // With modifiers: CSI 1;{param} letter
         let mut buf = Vec::with_capacity(8);
+        // infallible: writing to Vec<u8>
         write!(buf, "\x1b[1;{}{}", mods + 1, letter as char).unwrap();
         buf
     }
@@ -181,6 +182,7 @@ fn f1_f4(letter: u8, mods: u8) -> Vec<u8> {
         vec![0x1b, b'O', letter]
     } else {
         let mut buf = Vec::with_capacity(8);
+        // infallible: writing to Vec<u8>
         write!(buf, "\x1b[1;{}{}", mods + 1, letter as char).unwrap();
         buf
     }
@@ -190,8 +192,10 @@ fn f1_f4(letter: u8, mods: u8) -> Vec<u8> {
 fn csi_tilde(number: u32, mods: u8) -> Vec<u8> {
     let mut buf = Vec::with_capacity(8);
     if mods == 0 {
+        // infallible: writing to Vec<u8>
         write!(buf, "\x1b[{number}~").unwrap();
     } else {
+        // infallible: writing to Vec<u8>
         write!(buf, "\x1b[{number};{}~", mods + 1).unwrap();
     }
     buf

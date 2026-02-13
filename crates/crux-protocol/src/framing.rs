@@ -1,28 +1,15 @@
 //! Length-prefix framing for IPC message transport.
 
-use std::fmt;
-
 /// Maximum frame payload size (16 MB).
 pub const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 /// Errors that can occur during frame encoding/decoding.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum FrameError {
     /// The message exceeds [`MAX_FRAME_SIZE`].
+    #[error("message too large: {0} bytes (max {MAX_FRAME_SIZE})")]
     MessageTooLarge(usize),
 }
-
-impl fmt::Display for FrameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FrameError::MessageTooLarge(size) => {
-                write!(f, "message too large: {size} bytes (max {MAX_FRAME_SIZE})")
-            }
-        }
-    }
-}
-
-impl std::error::Error for FrameError {}
 
 /// Encode a message with a 4-byte big-endian length prefix.
 pub fn encode_frame(msg: &[u8]) -> Result<Vec<u8>, FrameError> {

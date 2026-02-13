@@ -53,9 +53,10 @@ impl Default for TerminalSize {
 }
 
 /// Damage state captured from alacritty_terminal's damage tracking.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum DamageState {
     /// No lines were damaged since the last render.
+    #[default]
     None,
     /// Only specific lines were damaged (partial update).
     Partial(Vec<LineDamage>),

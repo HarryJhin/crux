@@ -23,6 +23,7 @@ pub fn sgr_mouse_report(button: u8, point: Point, pressed: bool) -> Vec<u8> {
     let col = point.column.0 + 1;
     let row = point.line.0 + 1;
     let mut buf = Vec::with_capacity(16);
+    // infallible: writing to Vec<u8>
     write!(buf, "\x1b[<{button};{col};{row}{suffix}").unwrap();
     buf
 }
