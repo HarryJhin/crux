@@ -9,6 +9,12 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use crux_protocol::{decode_frame, encode_frame, JsonRpcId, JsonRpcRequest, JsonRpcResponse};
 
+/// Transport abstraction for IPC communication.
+/// Enables testing MCP tools without a running Crux instance.
+pub trait IpcTransport: Send + Sync {
+    fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value>;
+}
+
 /// Synchronous IPC client that connects to the running Crux terminal via Unix socket.
 ///
 /// Thread-safe via internal mutexes so it can be shared across async tasks
@@ -61,7 +67,7 @@ impl IpcClient {
     }
 
     /// Send a JSON-RPC request and wait for the response.
-    pub fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+    fn call_inner(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         let mut stream = self.stream.lock().unwrap();
         let mut next_id = self.next_id.lock().unwrap();
         let id = *next_id;
@@ -95,6 +101,12 @@ impl IpcClient {
                 return Ok(response.result.unwrap_or(serde_json::Value::Null));
             }
         }
+    }
+}
+
+impl IpcTransport for IpcClient {
+    fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        self.call_inner(method, params)
     }
 }
 

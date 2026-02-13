@@ -19,7 +19,7 @@ pub mod handler;
 pub mod server;
 pub mod socket;
 
-pub use client::IpcClient;
+pub use client::{IpcClient, IpcTransport};
 pub use command::IpcCommand;
 pub use socket::{discover_socket, socket_path};
 pub use tokio_util::sync::CancellationToken;

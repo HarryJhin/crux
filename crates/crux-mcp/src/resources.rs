@@ -1,7 +1,7 @@
 use rmcp::model::*;
 use rmcp::ErrorData as McpError;
 
-use crate::ipc_client::IpcClient;
+use crate::ipc_client::IpcTransport;
 
 pub fn resource_templates() -> Vec<ResourceTemplate> {
     vec![
@@ -45,7 +45,7 @@ pub fn parse_resource_uri(uri: &str) -> Option<(u64, &str)> {
 
 /// Read resource data from a pane via IPC.
 pub fn read_resource_data(
-    ipc: &IpcClient,
+    ipc: &dyn IpcTransport,
     pane_id: u64,
     resource_type: &str,
 ) -> Result<ResourceContents, McpError> {

@@ -58,7 +58,7 @@ async fn run_http(ipc: ipc_client::IpcClient, port: u16) -> anyhow::Result<()> {
     };
     use std::sync::Arc;
 
-    let ipc = Arc::new(ipc);
+    let ipc: Arc<dyn ipc_client::IpcTransport> = Arc::new(ipc);
     let session_manager = Arc::new(LocalSessionManager::default());
     let config = StreamableHttpServerConfig::default();
 

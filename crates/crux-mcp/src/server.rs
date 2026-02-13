@@ -8,18 +8,18 @@ use rmcp::ErrorData as McpError;
 use rmcp::RoleServer;
 use rmcp::{tool_handler, ServerHandler};
 
-use crate::ipc_client::IpcClient;
+use crate::ipc_client::{IpcClient, IpcTransport};
 
 #[derive(Clone)]
 pub struct CruxMcpServer {
-    pub ipc: Arc<IpcClient>,
+    pub ipc: Arc<dyn IpcTransport>,
     pub tool_router: ToolRouter<Self>,
     pub rate_limiter: Arc<DefaultDirectRateLimiter>,
 }
 
 impl CruxMcpServer {
     pub fn new(ipc: IpcClient) -> Self {
-        let ipc = Arc::new(ipc);
+        let ipc: Arc<dyn IpcTransport> = Arc::new(ipc);
         let tool_router = crate::tools::pane::router()
             + crate::tools::command::router()
             + crate::tools::state::router()
@@ -37,7 +37,7 @@ impl CruxMcpServer {
         }
     }
 
-    pub fn new_from_arc(ipc: Arc<IpcClient>) -> Self {
+    pub fn new_from_arc(ipc: Arc<dyn IpcTransport>) -> Self {
         let tool_router = crate::tools::pane::router()
             + crate::tools::command::router()
             + crate::tools::state::router()
@@ -233,7 +233,7 @@ impl ServerHandler for CruxMcpServer {
         let ipc = self.ipc.clone();
         let resource_type = resource_type.to_string();
         let contents = tokio::task::spawn_blocking(move || {
-            crate::resources::read_resource_data(&ipc, pane_id, &resource_type)
+            crate::resources::read_resource_data(&*ipc, pane_id, &resource_type)
         })
         .await
         .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))??;

@@ -13,6 +13,7 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape};
 
 use crate::event::{CruxEventListener, SemanticZone, SemanticZoneType, TerminalEvent};
 use crate::pty;
+use crate::traits::Terminal;
 
 /// Default scrollback history size in lines.
 const SCROLLBACK_LINES: usize = 10_000;
@@ -446,6 +447,66 @@ impl CruxTerminal {
     /// Get the child process PID.
     pub fn child_pid(&self) -> Option<u32> {
         self.child.process_id()
+    }
+}
+
+impl Terminal for CruxTerminal {
+    fn write_to_pty(&mut self, data: &[u8]) {
+        CruxTerminal::write_to_pty(self, data);
+    }
+
+    fn resize(&mut self, size: TerminalSize) {
+        CruxTerminal::resize(self, size);
+    }
+
+    fn content(&self) -> TerminalContent {
+        CruxTerminal::content(self)
+    }
+
+    fn drain_events(&mut self) -> Vec<TerminalEvent> {
+        CruxTerminal::drain_events(self)
+    }
+
+    fn cwd(&self) -> Option<&str> {
+        CruxTerminal::cwd(self)
+    }
+
+    fn size(&self) -> TerminalSize {
+        CruxTerminal::size(self)
+    }
+
+    fn scroll_display(&self, scroll: Scroll) {
+        CruxTerminal::scroll_display(self, scroll);
+    }
+
+    fn selection_to_string(&self) -> Option<String> {
+        CruxTerminal::selection_to_string(self)
+    }
+
+    fn semantic_zones(&self) -> &[SemanticZone] {
+        CruxTerminal::semantic_zones(self)
+    }
+
+    fn is_process_running(&mut self) -> bool {
+        CruxTerminal::is_process_running(self)
+    }
+
+    fn child_pid(&self) -> Option<u32> {
+        CruxTerminal::child_pid(self)
+    }
+
+    fn with_term<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&Term<CruxEventListener>) -> R,
+    {
+        CruxTerminal::with_term(self, f)
+    }
+
+    fn with_term_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Term<CruxEventListener>) -> R,
+    {
+        CruxTerminal::with_term_mut(self, f)
     }
 }
 

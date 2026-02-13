@@ -1,14 +1,9 @@
-//! NSPasteboard clipboard and drag-and-drop support.
-
-#![cfg(target_os = "macos")]
+//! Clipboard provider trait and platform implementations.
+//!
+//! The [`ClipboardProvider`] trait defines a platform-independent clipboard API.
+//! The macOS implementation uses NSPasteboard via objc2 bindings.
 
 use std::path::PathBuf;
-
-use objc2_app_kit::{
-    NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeString,
-    NSPasteboardTypeTIFF,
-};
-use objc2_foundation::{MainThreadMarker, NSArray, NSData, NSString};
 
 /// Errors that can occur during clipboard operations.
 #[derive(Debug, thiserror::Error)]
@@ -44,212 +39,31 @@ pub enum ClipboardContent {
     FilePaths(Vec<PathBuf>),
 }
 
-/// Convert TIFF image data to PNG format.
+/// Platform-independent clipboard access.
 ///
-/// macOS screenshots and pasteboard images are often in TIFF format.
-/// This converts them to PNG for broader compatibility.
-fn tiff_to_png(tiff_data: &[u8]) -> Result<Vec<u8>, ClipboardError> {
-    let img =
-        image::load_from_memory_with_format(tiff_data, image::ImageFormat::Tiff).map_err(|e| {
-            log::warn!("TIFF decode failed: {e}");
-            ClipboardError::ImageDecode(e.to_string())
-        })?;
-    let mut png_buf = Vec::new();
-    img.write_to(
-        &mut std::io::Cursor::new(&mut png_buf),
-        image::ImageFormat::Png,
-    )
-    .map_err(|e| {
-        log::warn!("PNG encode failed: {e}");
-        ClipboardError::ImageEncode(e.to_string())
-    })?;
-    Ok(png_buf)
-}
-
-/// Main clipboard interface for reading and writing to NSPasteboard.
-pub struct Clipboard;
-
-impl Clipboard {
-    /// Reads the current clipboard content and detects its type.
+/// Implementations provide read/write access to the system clipboard.
+/// The trait uses `&self` instance methods so that implementations can
+/// store platform-specific handles (e.g., `MainThreadMarker` on macOS).
+pub trait ClipboardProvider: Send + Sync {
+    /// Read the current clipboard content, auto-detecting the type.
     ///
     /// Priority: FilePaths > Image > Html > Text
-    pub fn read(_mtm: MainThreadMarker) -> Result<ClipboardContent, ClipboardError> {
-        // SAFETY: generalPasteboard() returns a process-lifetime singleton; called from main thread.
-        let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
+    fn read_clipboard(&self) -> Result<ClipboardContent, ClipboardError>;
 
-        // SAFETY: types() returns an autoreleased optional array of pasteboard type strings.
-        let types = unsafe { pasteboard.types() }.ok_or(ClipboardError::NoPasteboardTypes)?;
+    /// Read plain text from the clipboard.
+    fn read_text(&self) -> Result<String, ClipboardError>;
 
-        // Check for file URLs
-        // SAFETY: NSPasteboardTypeFileURL is a valid static pasteboard type constant.
-        if Self::contains_type(&types, unsafe { NSPasteboardTypeFileURL }) {
-            if let Ok(paths) = Self::read_file_paths_internal(&pasteboard) {
-                return Ok(ClipboardContent::FilePaths(paths));
-            }
-        }
+    /// Read image data from the clipboard as PNG bytes.
+    fn read_image(&self) -> Result<Vec<u8>, ClipboardError>;
 
-        // Check for images (PNG or TIFF)
-        // SAFETY: NSPasteboardTypePNG is a valid static pasteboard type constant.
-        if Self::contains_type(&types, unsafe { NSPasteboardTypePNG }) {
-            if let Ok(data) = Self::read_image_internal(&pasteboard) {
-                return Ok(ClipboardContent::Image { png_data: data });
-            }
-        }
+    /// Write plain text to the clipboard.
+    fn write_text(&self, text: &str) -> Result<(), ClipboardError>;
 
-        // SAFETY: NSPasteboardTypeTIFF is a valid static pasteboard type constant.
-        if Self::contains_type(&types, unsafe { NSPasteboardTypeTIFF }) {
-            if let Ok(data) = Self::read_image_internal(&pasteboard) {
-                return Ok(ClipboardContent::Image { png_data: data });
-            }
-        }
+    /// Write PNG image data to the clipboard.
+    fn write_image(&self, png_data: &[u8]) -> Result<(), ClipboardError>;
 
-        // Check for HTML (public.html UTI)
-        let html_type = NSString::from_str("public.html");
-        if Self::contains_type(&types, &html_type) {
-            // SAFETY: pasteboard is valid, html_type is a valid NSString key.
-            let data = unsafe { pasteboard.dataForType(&html_type) };
-            if let Some(data) = data {
-                if let Ok(html) = String::from_utf8(data.bytes().to_vec()) {
-                    return Ok(ClipboardContent::Html(html));
-                }
-            }
-        }
-
-        // Default to plain text
-        // SAFETY: NSPasteboardTypeString is a valid static pasteboard type constant.
-        if Self::contains_type(&types, unsafe { NSPasteboardTypeString }) {
-            if let Ok(text) = Self::read_text_internal(&pasteboard) {
-                return Ok(ClipboardContent::Text(text));
-            }
-        }
-
-        Err(ClipboardError::NoSupportedContent)
-    }
-
-    /// Reads plain text from the clipboard.
-    pub fn read_text(_mtm: MainThreadMarker) -> Result<String, ClipboardError> {
-        // SAFETY: generalPasteboard() returns a process-lifetime singleton; called from main thread.
-        let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
-        Self::read_text_internal(&pasteboard)
-    }
-
-    /// Reads image data from the clipboard as PNG.
-    ///
-    /// If the clipboard contains TIFF data, it is returned as-is.
-    /// The caller is responsible for converting TIFF to PNG if needed.
-    pub fn read_image(_mtm: MainThreadMarker) -> Result<Vec<u8>, ClipboardError> {
-        // SAFETY: generalPasteboard() returns a process-lifetime singleton; called from main thread.
-        let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
-        Self::read_image_internal(&pasteboard)
-    }
-
-    /// Writes plain text to the clipboard.
-    pub fn write_text(text: &str, _mtm: MainThreadMarker) -> Result<(), ClipboardError> {
-        // SAFETY: generalPasteboard() returns a process-lifetime singleton; called from main thread.
-        let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
-
-        // SAFETY: clearContents() resets the pasteboard; valid on a live pasteboard instance.
-        unsafe { pasteboard.clearContents() };
-
-        let ns_string = NSString::from_str(text);
-
-        // SAFETY: setString_forType writes a valid NSString with a valid type key.
-        let success = unsafe { pasteboard.setString_forType(&ns_string, NSPasteboardTypeString) };
-
-        if success {
-            Ok(())
-        } else {
-            Err(ClipboardError::WriteFailed)
-        }
-    }
-
-    /// Writes PNG image data to the clipboard.
-    pub fn write_image(png_data: &[u8], _mtm: MainThreadMarker) -> Result<(), ClipboardError> {
-        // SAFETY: generalPasteboard() returns a process-lifetime singleton; called from main thread.
-        let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
-
-        // SAFETY: clearContents() resets the pasteboard; valid on a live pasteboard instance.
-        unsafe { pasteboard.clearContents() };
-
-        let ns_data = NSData::with_bytes(png_data);
-
-        // SAFETY: setData_forType writes valid NSData with a valid type key.
-        let success = unsafe { pasteboard.setData_forType(Some(&ns_data), NSPasteboardTypePNG) };
-
-        if success {
-            Ok(())
-        } else {
-            Err(ClipboardError::WriteFailed)
-        }
-    }
-
-    /// Returns a list of available type identifiers in the clipboard.
-    pub fn available_types(_mtm: MainThreadMarker) -> Vec<String> {
-        // SAFETY: generalPasteboard() returns a process-lifetime singleton; called from main thread.
-        let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
-
-        // SAFETY: types() returns an autoreleased optional array of pasteboard type strings.
-        let types = unsafe { pasteboard.types() };
-
-        match types {
-            Some(types) => (0..types.count())
-                .map(|i| {
-                    // SAFETY: index is in bounds (0..count), returns autoreleased NSString.
-                    unsafe { types.objectAtIndex(i) }.to_string()
-                })
-                .collect(),
-            None => Vec::new(),
-        }
-    }
-
-    // -- Internal helper methods --
-
-    fn read_text_internal(pasteboard: &NSPasteboard) -> Result<String, ClipboardError> {
-        // SAFETY: stringForType with a valid type key returns an autoreleased optional NSString.
-        unsafe { pasteboard.stringForType(NSPasteboardTypeString) }
-            .map(|s| s.to_string())
-            .ok_or(ClipboardError::NoText)
-    }
-
-    fn read_image_internal(pasteboard: &NSPasteboard) -> Result<Vec<u8>, ClipboardError> {
-        // Try PNG first — return as-is.
-        if let Some(data) = unsafe { pasteboard.dataForType(NSPasteboardTypePNG) } {
-            return Ok(data.bytes().to_vec());
-        }
-
-        // Fall back to TIFF and convert to PNG.
-        if let Some(data) = unsafe { pasteboard.dataForType(NSPasteboardTypeTIFF) } {
-            return tiff_to_png(data.bytes());
-        }
-
-        Err(ClipboardError::NoImage)
-    }
-
-    fn read_file_paths_internal(pasteboard: &NSPasteboard) -> Result<Vec<PathBuf>, ClipboardError> {
-        // Read file URL string from pasteboard.
-        let file_url_type = unsafe { NSPasteboardTypeFileURL };
-        let data = unsafe { pasteboard.stringForType(file_url_type) };
-        if let Some(url_string) = data {
-            let url_str = url_string.to_string();
-            // File URLs are percent-encoded: file:///path/to/file
-            if let Ok(url) = url::Url::parse(&url_str) {
-                if let Ok(path) = url.to_file_path() {
-                    return Ok(vec![path]);
-                }
-            }
-            // Fallback: treat as a plain path.
-            return Ok(vec![PathBuf::from(url_str)]);
-        }
-        Err(ClipboardError::NoSupportedContent)
-    }
-
-    fn contains_type(types: &NSArray<NSString>, type_str: &NSString) -> bool {
-        (0..types.count()).any(|i| {
-            // SAFETY: objectAtIndex with valid index returns autoreleased NSString;
-            // isEqualToString compares two valid NSString instances.
-            unsafe { types.objectAtIndex(i).isEqualToString(type_str) }
-        })
-    }
+    /// Return a list of available type identifiers in the clipboard.
+    fn available_types(&self) -> Vec<String>;
 }
 
 /// Save clipboard image to a temp file and return the path.
@@ -297,6 +111,14 @@ pub fn save_image_to_temp(png_data: &[u8]) -> Result<std::path::PathBuf, Clipboa
 
     Ok(path)
 }
+
+// -- macOS implementation -------------------------------------------------
+
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "macos")]
+pub use macos::Clipboard;
 
 #[cfg(test)]
 mod tests {

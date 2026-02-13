@@ -77,6 +77,7 @@ fn main() {
 
 fn run_cli(action: cli::commands::CliAction) -> anyhow::Result<()> {
     use cli::commands::CliAction;
+    use crux_ipc::IpcTransport;
     use crux_protocol::*;
 
     let client = cli::client::connect()?;

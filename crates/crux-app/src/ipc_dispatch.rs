@@ -109,11 +109,8 @@ impl CruxApp {
                         p.write_to_pty(&text, bracketed, cx);
                     });
                     let _ = reply.send(Ok(crux_protocol::SendTextResult { bytes_written: len }));
-                } else if params.pane_id.is_some() {
-                    let _ = reply.send(Err(anyhow::anyhow!(
-                        "pane {} not found",
-                        params.pane_id.unwrap()
-                    )));
+                } else if let Some(id) = params.pane_id {
+                    let _ = reply.send(Err(anyhow::anyhow!("pane {} not found", id)));
                 } else {
                     let _ = reply.send(Err(anyhow::anyhow!("no active pane")));
                 }
@@ -129,11 +126,8 @@ impl CruxApp {
                         cursor_col,
                     };
                     let _ = reply.send(Ok(result));
-                } else if params.pane_id.is_some() {
-                    let _ = reply.send(Err(anyhow::anyhow!(
-                        "pane {} not found",
-                        params.pane_id.unwrap()
-                    )));
+                } else if let Some(id) = params.pane_id {
+                    let _ = reply.send(Err(anyhow::anyhow!("pane {} not found", id)));
                 } else {
                     let _ = reply.send(Err(anyhow::anyhow!("no active pane")));
                 }
@@ -147,11 +141,8 @@ impl CruxApp {
                         text,
                     };
                     let _ = reply.send(Ok(result));
-                } else if params.pane_id.is_some() {
-                    let _ = reply.send(Err(anyhow::anyhow!(
-                        "pane {} not found",
-                        params.pane_id.unwrap()
-                    )));
+                } else if let Some(id) = params.pane_id {
+                    let _ = reply.send(Err(anyhow::anyhow!("pane {} not found", id)));
                 } else {
                     let _ = reply.send(Err(anyhow::anyhow!("no active pane")));
                 }
@@ -161,11 +152,8 @@ impl CruxApp {
                 if let Some((_id, panel)) = self.resolve_pane(params.pane_id, window, cx) {
                     let result = panel.read(cx).get_snapshot(cx);
                     let _ = reply.send(Ok(result));
-                } else if params.pane_id.is_some() {
-                    let _ = reply.send(Err(anyhow::anyhow!(
-                        "pane {} not found",
-                        params.pane_id.unwrap()
-                    )));
+                } else if let Some(id) = params.pane_id {
+                    let _ = reply.send(Err(anyhow::anyhow!("pane {} not found", id)));
                 } else {
                     let _ = reply.send(Err(anyhow::anyhow!("no active pane")));
                 }

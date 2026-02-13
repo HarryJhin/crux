@@ -8,6 +8,7 @@ pub mod event;
 pub(crate) mod osc_scanner;
 pub mod pty;
 pub mod terminal;
+pub mod traits;
 
 // Re-export primary types at crate root for convenience.
 pub use event::{CruxEventListener, SemanticZone, SemanticZoneType, TerminalEvent};
@@ -15,6 +16,7 @@ pub use pty::ensure_terminfo_installed;
 pub use terminal::{
     CruxTerminal, CursorState, DamageState, IndexedCell, LineDamage, TerminalContent, TerminalSize,
 };
+pub use traits::Terminal;
 
 // Re-export commonly needed alacritty types so downstream crates
 // don't need to depend on alacritty_terminal directly.

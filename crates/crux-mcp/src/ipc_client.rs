@@ -1,1 +1,1 @@
-pub use crux_ipc::IpcClient;
+pub use crux_ipc::{IpcClient, IpcTransport};
