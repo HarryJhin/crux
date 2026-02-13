@@ -29,8 +29,11 @@ impl CruxMcpServer {
             + crate::tools::content::router();
 
         // Rate limiter: 20 requests per second with burst of 40
-        let quota = Quota::per_second(std::num::NonZeroU32::new(20).unwrap())
-            .allow_burst(std::num::NonZeroU32::new(40).unwrap());
+        // SAFETY: 20 is non-zero
+        let rate = std::num::NonZeroU32::new(20).unwrap();
+        // SAFETY: 40 is non-zero
+        let burst = std::num::NonZeroU32::new(40).unwrap();
+        let quota = Quota::per_second(rate).allow_burst(burst);
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
         Self {

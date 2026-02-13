@@ -1613,6 +1613,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "crux-clipboard",
+ "crux-config",
  "crux-terminal",
  "gpui",
  "log",

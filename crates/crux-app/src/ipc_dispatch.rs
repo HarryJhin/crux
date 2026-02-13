@@ -54,6 +54,8 @@ impl CruxApp {
                         params.cwd.as_deref(),
                         params.command.as_deref(),
                         params.env.as_ref(),
+                        crux_config::FontConfig::default(),
+                        crux_config::ColorConfig::default(),
                         window,
                         cx,
                     )

@@ -12,6 +12,7 @@ doctest = false
 gpui.workspace = true
 crux-terminal.workspace = true
 crux-clipboard.workspace = true
+crux-config.workspace = true
 log.workspace = true
 unicode-normalization.workspace = true
 shell-escape.workspace = true

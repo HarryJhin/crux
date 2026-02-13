@@ -4,6 +4,7 @@ use std::path::Path;
 use gpui::*;
 use gpui_component::dock::{register_panel, Panel, PanelEvent, PanelInfo, PanelState};
 
+use crux_config::{ColorConfig, FontConfig};
 use crux_protocol::PaneId;
 use crux_terminal_view::CruxTerminalView;
 
@@ -27,7 +28,16 @@ pub fn register(cx: &mut App) {
             };
             Box::new(
                 cx.new(|cx| {
-                    CruxTerminalPanel::new(pane_id, cwd.as_deref(), None, None, window, cx)
+                    CruxTerminalPanel::new(
+                        pane_id,
+                        cwd.as_deref(),
+                        None,
+                        None,
+                        FontConfig::default(),
+                        ColorConfig::default(),
+                        window,
+                        cx,
+                    )
                 }),
             )
         },
@@ -40,18 +50,20 @@ pub fn register(cx: &mut App) {
 /// `CruxTerminalPanel` adapts it to the `Panel` trait for tab/split management.
 pub struct CruxTerminalPanel {
     /// IPC pane identifier. Used by CLI commands to target this panel.
-    #[allow(dead_code)]
     pane_id: PaneId,
     focus_handle: FocusHandle,
     terminal_view: Entity<CruxTerminalView>,
 }
 
 impl CruxTerminalPanel {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pane_id: PaneId,
         cwd: Option<&str>,
         command: Option<&[String]>,
         env: Option<&HashMap<String, String>>,
+        font_config: FontConfig,
+        color_config: ColorConfig,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -63,7 +75,9 @@ impl CruxTerminalPanel {
         child_env.insert("CRUX_PANE".to_string(), pane_id.0.to_string());
         child_env.insert("TERM_PROGRAM".to_string(), "Crux".to_string());
 
-        let terminal_view = cx.new(|cx| CruxTerminalView::new_with_options(cwd, command, Some(&child_env), cx));
+        let terminal_view = cx.new(|cx| {
+            CruxTerminalView::new_with_options(cwd, command, Some(&child_env), font_config, color_config, cx)
+        });
 
         // Focus the inner terminal view so key events reach the PTY.
         let inner_focus = terminal_view.read(cx).focus_handle(cx);

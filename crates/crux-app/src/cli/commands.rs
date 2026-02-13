@@ -1,3 +1,5 @@
+//! CLI command definitions using clap derive macros.
+
 use clap::{Parser, Subcommand};
 
 /// Crux terminal emulator

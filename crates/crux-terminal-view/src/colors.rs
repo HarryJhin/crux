@@ -4,6 +4,7 @@ use crux_terminal::{Color, NamedColor};
 use gpui::Hsla;
 
 /// Catppuccin Mocha palette (default theme).
+/// These constants serve as fallback defaults.
 const BLACK: u32 = 0x1e1e2e;
 const RED: u32 = 0xf38ba8;
 const GREEN: u32 = 0xa6e3a1;

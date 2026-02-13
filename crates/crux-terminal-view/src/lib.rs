@@ -6,7 +6,7 @@ mod element;
 pub mod ime_switch;
 mod input;
 mod keyboard;
-#[allow(dead_code)]
+#[allow(dead_code)] // TODO: Wire into keyboard.rs when Kitty keyboard response encoding is needed
 mod kitty_encode;
 mod mouse;
 pub mod url_detector;

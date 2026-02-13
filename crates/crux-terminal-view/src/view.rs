@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use gpui::*;
 use unicode_normalization::UnicodeNormalization;
 
+use crux_config::{ColorConfig, FontConfig};
 use crux_terminal::{
     Column, CruxTerminal, DamageState, Dimensions, Line, Point, Scroll, Selection, SelectionType,
     Side, TermMode, TerminalContent, TerminalEvent, TerminalSize,
@@ -14,9 +15,6 @@ use crux_terminal::{
 use crate::element::render_terminal_canvas;
 use crate::input::OptionAsAlt;
 use crate::mouse;
-
-const FONT_FAMILY: &str = "Menlo";
-const FONT_SIZE: f32 = 14.0;
 
 /// Duration for bell visual flash.
 const BELL_FLASH_DURATION: Duration = Duration::from_millis(150);
@@ -35,6 +33,10 @@ pub struct CruxTerminalView {
     pub(crate) focus_handle: FocusHandle,
     font: Font,
     font_size: Pixels,
+    #[allow(dead_code)]
+    font_config: FontConfig,
+    #[allow(dead_code)]
+    color_config: ColorConfig,
     pub(crate) cell_width: Pixels,
     pub(crate) cell_height: Pixels,
     /// Origin of the terminal canvas in window coordinates, updated each render.
@@ -110,7 +112,7 @@ impl CruxTerminalView {
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
-        Self::new_with_options(None, None, None, cx)
+        Self::new_with_options(None, None, None, FontConfig::default(), ColorConfig::default(), cx)
     }
 
     /// Create a new terminal view with optional cwd, command, and env.
@@ -118,12 +120,14 @@ impl CruxTerminalView {
         cwd: Option<&str>,
         command: Option<&[String]>,
         env: Option<&std::collections::HashMap<String, String>>,
+        font_config: FontConfig,
+        color_config: ColorConfig,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let terminal_font = font(FONT_FAMILY);
-        let font_size = px(FONT_SIZE);
+        let terminal_font = font(&font_config.family);
+        let font_size = px(font_config.size);
 
         // Default cell metrics; will be recalculated on first layout.
         let cell_width = px(8.4);
@@ -168,6 +172,8 @@ impl CruxTerminalView {
             focus_handle,
             font: terminal_font,
             font_size,
+            font_config,
+            color_config,
             cell_width,
             cell_height,
             canvas_origin: gpui::point(px(0.0), px(0.0)),

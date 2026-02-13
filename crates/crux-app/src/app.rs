@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -22,13 +22,12 @@ pub struct CruxApp {
     pub(crate) pane_registry: HashMap<PaneId, Entity<CruxTerminalPanel>>,
     next_pane_id: AtomicU64,
     /// Buffer of pane lifecycle events for future consumers (IPC notifications, etc.).
-    pane_events: Vec<PaneEvent>,
+    pane_events: VecDeque<PaneEvent>,
     /// Tracks which pane was split from which parent pane.
     pub(crate) pane_parents: HashMap<PaneId, PaneId>,
     /// Background MCP server process.
     mcp_process: Option<std::process::Child>,
     /// Application configuration loaded from config file.
-    #[allow(dead_code)]
     pub(crate) config: CruxConfig,
 }
 
@@ -69,7 +68,18 @@ impl CruxApp {
         let pane_id = PaneId(0);
         let weak_dock = dock_area.downgrade();
         let initial_tab =
-            cx.new(|cx| CruxTerminalPanel::new(pane_id, None, None, None, window, cx));
+            cx.new(|cx| {
+                CruxTerminalPanel::new(
+                    pane_id,
+                    None,
+                    None,
+                    None,
+                    config.font.clone(),
+                    config.colors.clone(),
+                    window,
+                    cx,
+                )
+            });
         pane_registry.insert(pane_id, initial_tab.clone());
 
         let dock_item = DockItem::tab(initial_tab, &weak_dock, window, cx);
@@ -102,7 +112,7 @@ impl CruxApp {
             _socket_path: socket_path,
             pane_registry,
             next_pane_id: AtomicU64::new(1),
-            pane_events: Vec::new(),
+            pane_events: VecDeque::new(),
             pane_parents: HashMap::new(),
             mcp_process,
             config,
@@ -205,14 +215,36 @@ impl CruxApp {
     fn action_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
         let pane_id = self.allocate_pane_id();
         if let Some(tab_panel) = self.focused_tab_panel(window, cx) {
-            let panel = cx.new(|cx| CruxTerminalPanel::new(pane_id, None, None, None, window, cx));
+            let panel = cx.new(|cx| {
+                CruxTerminalPanel::new(
+                    pane_id,
+                    None,
+                    None,
+                    None,
+                    self.config.font.clone(),
+                    self.config.colors.clone(),
+                    window,
+                    cx,
+                )
+            });
             self.pane_registry.insert(pane_id, panel.clone());
             let panel_view: Arc<dyn PanelView> = Arc::new(panel);
             tab_panel.update(cx, |tp, cx| {
                 tp.add_panel(panel_view, window, cx);
             });
         } else {
-            let panel = cx.new(|cx| CruxTerminalPanel::new(pane_id, None, None, None, window, cx));
+            let panel = cx.new(|cx| {
+                CruxTerminalPanel::new(
+                    pane_id,
+                    None,
+                    None,
+                    None,
+                    self.config.font.clone(),
+                    self.config.colors.clone(),
+                    window,
+                    cx,
+                )
+            });
             self.pane_registry.insert(pane_id, panel.clone());
             let panel_view: Arc<dyn PanelView> = Arc::new(panel);
             self.dock_area.update(cx, |area, cx| {
@@ -347,7 +379,18 @@ impl CruxApp {
 
     fn window_split(&mut self, placement: Placement, window: &mut Window, cx: &mut Context<Self>) {
         let pane_id = self.allocate_pane_id();
-        let panel = cx.new(|cx| CruxTerminalPanel::new(pane_id, None, None, None, window, cx));
+        let panel = cx.new(|cx| {
+                CruxTerminalPanel::new(
+                    pane_id,
+                    None,
+                    None,
+                    None,
+                    self.config.font.clone(),
+                    self.config.colors.clone(),
+                    window,
+                    cx,
+                )
+            });
         self.pane_registry.insert(pane_id, panel.clone());
 
         let panel_view: Arc<dyn PanelView> = Arc::new(panel);
@@ -375,7 +418,18 @@ impl CruxApp {
         let parent_pane_id = self.active_pane_id(window, cx);
 
         let pane_id = self.allocate_pane_id();
-        let panel = cx.new(|cx| CruxTerminalPanel::new(pane_id, None, None, None, window, cx));
+        let panel = cx.new(|cx| {
+                CruxTerminalPanel::new(
+                    pane_id,
+                    None,
+                    None,
+                    None,
+                    self.config.font.clone(),
+                    self.config.colors.clone(),
+                    window,
+                    cx,
+                )
+            });
         self.pane_registry.insert(pane_id, panel.clone());
         let panel_view: Arc<dyn PanelView> = Arc::new(panel);
 
@@ -484,23 +538,25 @@ impl CruxApp {
         const MAX_PANE_EVENTS: usize = 10_000;
         if self.pane_events.len() >= MAX_PANE_EVENTS {
             // Remove oldest event to prevent unbounded growth.
-            self.pane_events.remove(0);
+            self.pane_events.pop_front();
         }
-        self.pane_events.push(event);
+        self.pane_events.push_back(event);
     }
 
     /// Drain all buffered pane events for consumption.
     pub(crate) fn drain_pane_events(&mut self) -> Vec<PaneEvent> {
-        std::mem::take(&mut self.pane_events)
+        self.pane_events.drain(..).collect()
     }
 
     /// Get the parent pane that a given pane was split from.
+    // TODO: Used by future pane tree navigation (Phase 2 split pane features)
     #[allow(dead_code)]
     fn pane_parent(&self, pane_id: PaneId) -> Option<PaneId> {
         self.pane_parents.get(&pane_id).copied()
     }
 
     /// Get all panes that were split from a given parent pane.
+    // TODO: Used by future pane tree navigation (Phase 2 split pane features)
     #[allow(dead_code)]
     fn pane_children(&self, pane_id: PaneId) -> Vec<PaneId> {
         self.pane_parents

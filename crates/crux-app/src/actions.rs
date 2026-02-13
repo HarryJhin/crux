@@ -1,3 +1,5 @@
+//! GPUI action definitions for keybinding dispatch.
+
 use gpui::actions;
 
 actions!(

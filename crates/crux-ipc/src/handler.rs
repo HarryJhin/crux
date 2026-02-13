@@ -381,3 +381,141 @@ async fn send_command_unit(
         Err(_) => JsonRpcResponse::error(id, error_code::INTERNAL_ERROR, "handler dropped"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+    use crux_protocol::{JsonRpcRequest, JsonRpcId, error_code, method, HandshakeParams, HandshakeResult};
+    use serde_json::json;
+
+    use super::dispatch_request;
+
+    #[tokio::test]
+    async fn test_dispatch_unknown_method_returns_error() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "unknown_method".to_string(),
+            params: None,
+            id: Some(JsonRpcId::Number(1)),
+        };
+
+        let response = dispatch_request(request, &cmd_tx).await.unwrap();
+
+        assert!(matches!(response, crux_protocol::JsonRpcResponse::Error { .. }));
+        if let crux_protocol::JsonRpcResponse::Error { error, .. } = response {
+            assert_eq!(error.code, error_code::METHOD_NOT_FOUND);
+            assert!(error.message.contains("unknown method"));
+        }
+
+        // No command should be sent
+        assert!(cmd_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_invalid_params_returns_error() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+
+        // Handshake expects HandshakeParams, but we'll send invalid JSON
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: method::HANDSHAKE.to_string(),
+            params: Some(json!("invalid")),
+            id: Some(JsonRpcId::Number(2)),
+        };
+
+        let response = dispatch_request(request, &cmd_tx).await.unwrap();
+
+        assert!(matches!(response, crux_protocol::JsonRpcResponse::Error { .. }));
+        if let crux_protocol::JsonRpcResponse::Error { error, .. } = response {
+            assert_eq!(error.code, error_code::INVALID_PARAMS);
+            assert!(error.message.contains("invalid params"));
+        }
+
+        // No command should be sent
+        assert!(cmd_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_notification_returns_none() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+
+        // Request with no id is a notification
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: method::HANDSHAKE.to_string(),
+            params: Some(json!({})),
+            id: None,
+        };
+
+        let response = dispatch_request(request, &cmd_tx).await;
+
+        // Notifications should return None (no response)
+        assert!(response.is_none());
+
+        // Command should still be processed (sent to channel)
+        assert!(cmd_rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_valid_handshake_sends_command() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: method::HANDSHAKE.to_string(),
+            params: Some(json!({})),
+            id: Some(JsonRpcId::Number(3)),
+        };
+
+        // Spawn a task to handle the command
+        let response_handle = tokio::spawn(async move {
+            dispatch_request(request, &cmd_tx).await
+        });
+
+        // Receive the command and reply
+        if let Some(cmd) = cmd_rx.recv().await {
+            if let crate::command::IpcCommand::Handshake { reply, .. } = cmd {
+                let result = HandshakeResult {
+                    server_name: "test".to_string(),
+                    server_version: "1.0".to_string(),
+                    protocol_version: "1.0".to_string(),
+                    supported_capabilities: vec![],
+                };
+                let _ = reply.send(Ok(result));
+            }
+        }
+
+        let response = response_handle.await.unwrap().unwrap();
+
+        // Should be a success response
+        assert!(matches!(response, crux_protocol::JsonRpcResponse::Success { .. }));
+        if let crux_protocol::JsonRpcResponse::Success { result, .. } = response {
+            assert!(result.get("server_name").is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_invalid_jsonrpc_version_returns_error() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+
+        let request = JsonRpcRequest {
+            jsonrpc: "1.0".to_string(), // Wrong version
+            method: method::HANDSHAKE.to_string(),
+            params: None,
+            id: Some(JsonRpcId::Number(4)),
+        };
+
+        let response = dispatch_request(request, &cmd_tx).await.unwrap();
+
+        assert!(matches!(response, crux_protocol::JsonRpcResponse::Error { .. }));
+        if let crux_protocol::JsonRpcResponse::Error { error, .. } = response {
+            assert_eq!(error.code, error_code::INVALID_REQUEST);
+            assert!(error.message.contains("JSON-RPC version"));
+        }
+
+        // No command should be sent
+        assert!(cmd_rx.try_recv().is_err());
+    }
+}
