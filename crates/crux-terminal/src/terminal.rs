@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -125,8 +124,8 @@ pub struct CruxTerminal {
     /// Current working directory reported by the shell via OSC 7.
     cwd: Option<String>,
     /// Completed semantic zones from OSC 133 shell integration.
-    /// Uses VecDeque for efficient front-removal when evicting old zones.
-    semantic_zones: VecDeque<SemanticZone>,
+    /// Uses Vec with capped size to avoid non-contiguous slicing issues.
+    semantic_zones: Vec<SemanticZone>,
     /// Current zone being built (tracks the last seen marker).
     current_zone_type: Option<SemanticZoneType>,
     /// Line where the current zone started.
@@ -198,7 +197,7 @@ impl CruxTerminal {
             event_rx,
             size,
             cwd: None,
-            semantic_zones: VecDeque::new(),
+            semantic_zones: Vec::new(),
             current_zone_type: None,
             current_zone_start_line: 0,
             current_zone_start_col: 0,
@@ -377,7 +376,7 @@ impl CruxTerminal {
 
         // Close the current zone if one is open.
         if let Some(zone_type) = self.current_zone_type.take() {
-            self.semantic_zones.push_back(SemanticZone {
+            self.semantic_zones.push(SemanticZone {
                 start_line: self.current_zone_start_line,
                 start_col: self.current_zone_start_col,
                 end_line: cursor_line,
@@ -392,8 +391,10 @@ impl CruxTerminal {
 
             // Cap semantic_zones to prevent unbounded growth in long-lived sessions.
             // Remove oldest zones when we exceed the limit.
-            while self.semantic_zones.len() > MAX_SEMANTIC_ZONES {
-                self.semantic_zones.pop_front();
+            if self.semantic_zones.len() > MAX_SEMANTIC_ZONES {
+                // Remove first N zones to get back under the limit.
+                let remove_count = self.semantic_zones.len() - MAX_SEMANTIC_ZONES;
+                self.semantic_zones.drain(0..remove_count);
             }
         }
 
@@ -418,20 +419,7 @@ impl CruxTerminal {
 
     /// Get all completed semantic zones from OSC 133 shell integration.
     pub fn semantic_zones(&self) -> &[SemanticZone] {
-        // VecDeque::make_contiguous() would require &mut self, which we don't have.
-        // Use as_slices() to get immutable slice access. If the deque is contiguous,
-        // the second slice will be empty. If not contiguous (rare), we can only
-        // return one of the slices. Since zones are pushed to the back and popped
-        // from the front, the back slice (slice1) contains the most recent zones.
-        let (slice1, slice2) = self.semantic_zones.as_slices();
-        if slice2.is_empty() {
-            slice1
-        } else {
-            // Not contiguous: return the back slice (most recent zones).
-            // This is rare and only happens after front eviction + back insertion patterns.
-            // Full correctness would require changing the API to return Vec or iterator.
-            slice1
-        }
+        &self.semantic_zones
     }
 
     /// Get the line number of the most recent prompt start.

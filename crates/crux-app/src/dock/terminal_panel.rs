@@ -166,11 +166,13 @@ impl CruxTerminalPanel {
     /// Get a full snapshot of the terminal state (text + metadata).
     pub fn get_snapshot(&self, cx: &App) -> crux_protocol::GetSnapshotResult {
         let view = self.terminal_view.read(cx);
-        // Single snapshot call to avoid double content() invocation.
+        // Single snapshot call to avoid double FairMutex acquisition.
         let content = view.terminal_content_snapshot();
         let size = view.terminal_size();
 
-        let lines = view.get_text_lines();
+        // Extract text lines from the existing snapshot instead of calling get_text_lines(),
+        // which would acquire the FairMutex a second time.
+        let lines = view.get_text_lines_from_content(&content);
 
         let cursor_shape = format!("{:?}", content.cursor.shape);
         crux_protocol::GetSnapshotResult {

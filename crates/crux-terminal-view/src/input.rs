@@ -13,7 +13,7 @@ use gpui::Keystroke;
 /// When true, Option+key sends ESC prefix (terminal Alt behavior).
 /// When false, Option+key sends the macOS special character (e.g., å, ∫, ç).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
+#[allow(dead_code)] // TODO: Left/Right variants will be used when per-modifier option-as-alt config is wired
 pub enum OptionAsAlt {
     /// Neither Option key acts as Alt (macOS default behavior).
     None,

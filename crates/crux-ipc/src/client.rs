@@ -164,15 +164,22 @@ mod tests {
 
     #[test]
     fn find_socket_falls_through_nonexistent_env() {
+        // SAFETY: Test-only code. Setting environment variable before any reads.
+        // The subsequent remove_var is also unsafe but necessary for test cleanup.
         unsafe { std::env::set_var("CRUX_SOCKET", "/tmp/nonexistent-crux-socket-12345") };
         let result = find_socket();
         let _ = result;
+        // SAFETY: Test cleanup. Removing the test environment variable after the test.
+        // No other threads should be reading this variable in the test environment.
         unsafe { std::env::remove_var("CRUX_SOCKET") };
     }
 
     #[test]
     fn find_socket_without_env_uses_discover() {
-        std::env::remove_var("CRUX_SOCKET");
+        // SAFETY: Test-only code. Removing test environment variable to verify
+        // the fallback discovery mechanism. No other threads are reading this
+        // variable in the test environment.
+        unsafe { std::env::remove_var("CRUX_SOCKET") };
         let result = find_socket();
         if result.is_err() {
             let err_msg = result.unwrap_err().to_string();

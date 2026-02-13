@@ -33,8 +33,7 @@ pub struct CruxTerminalView {
     pub(crate) focus_handle: FocusHandle,
     font: Font,
     font_size: Pixels,
-    /// TODO: Wire font_config into cell metrics calculation (font size, line height).
-    /// Currently font_size is hardcoded from config.font.size at initialization.
+    /// Font configuration; updated via `update_font_config()` for hot-reload support.
     #[allow(dead_code)]
     font_config: FontConfig,
     pub(crate) color_config: ColorConfig,
@@ -112,6 +111,17 @@ impl CruxTerminalView {
         self.vim_ime_switch = enabled;
     }
 
+    /// Update font configuration and recalculate cell metrics (font size, line height).
+    /// TODO: Call this when config hot-reload is wired into the app.
+    #[allow(dead_code)]
+    pub(crate) fn update_font_config(&mut self, config: FontConfig) {
+        self.font_config = config;
+        self.font_size = px(self.font_config.size);
+        self.font = font(&self.font_config.family);
+        // Mark cell metrics as needing remeasurement on next layout.
+        self.cell_measured = false;
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         use crux_config::TerminalConfig;
         Self::new_with_options(
@@ -182,7 +192,14 @@ impl CruxTerminalView {
                 log::error!("Failed to create terminal: {}. Using default shell.", e);
                 // Fall back to default shell without custom command
                 CruxTerminal::new(None, Some(&terminal_config.shell_args), size, cwd, None, Some(&merged_env))
-                    .expect("Failed to create terminal even with default shell")
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "Failed to create terminal even with default shell: {}. \
+                            This likely means no usable shell was found (/bin/bash, /bin/zsh, /bin/sh). \
+                            Original error: {}",
+                            err, e
+                        )
+                    })
             }
         };
 

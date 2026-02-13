@@ -34,6 +34,8 @@ pub struct CruxApp {
     mcp_process: Option<std::process::Child>,
     /// Application configuration loaded from config file.
     pub(crate) config: CruxConfig,
+    /// Cached active pane ID for O(1) lookup. Updated when focus changes.
+    pub(crate) active_pane: Option<PaneId>,
 }
 
 impl CruxApp {
@@ -133,6 +135,7 @@ impl CruxApp {
             pane_parents: HashMap::new(),
             mcp_process,
             config,
+            active_pane: Some(pane_id),
         }
     }
 
@@ -292,6 +295,7 @@ impl CruxApp {
                 area.add_panel(panel_view, DockPlacement::Center, None, window, cx);
             });
         }
+        self.active_pane = Some(pane_id);
         self.emit_pane_event(PaneEvent::Created { pane_id });
     }
 
@@ -436,6 +440,7 @@ impl CruxApp {
             area.add_panel(panel_view, dock_placement, None, window, cx);
         });
 
+        self.active_pane = Some(pane_id);
         self.emit_pane_event(PaneEvent::Created { pane_id });
     }
 
@@ -459,6 +464,7 @@ impl CruxApp {
         if let Some(parent_id) = parent_pane_id {
             self.pane_parents.insert(pane_id, parent_id);
         }
+        self.active_pane = Some(pane_id);
         self.emit_pane_event(PaneEvent::Created { pane_id });
     }
 
@@ -538,8 +544,9 @@ impl CruxApp {
         let fh = target.read(cx).focus_handle(cx);
         fh.focus(window);
 
-        // Emit focused event for the newly focused pane.
+        // Update cached active pane and emit focused event.
         if let Some(pane_id) = self.active_pane_id(window, cx) {
+            self.active_pane = Some(pane_id);
             self.emit_pane_event(PaneEvent::Focused { pane_id });
         }
     }
@@ -658,6 +665,9 @@ impl CruxApp {
         // Set next_pane_id to max+1.
         let max_id = self.pane_registry.keys().map(|id| id.0).max().unwrap_or(0);
         self.next_pane_id.store(max_id + 1, Ordering::Relaxed);
+
+        // Reset active_pane cache after session load.
+        self.active_pane = None;
 
         let pane_count = self.pane_registry.len() as u32;
         log::info!(

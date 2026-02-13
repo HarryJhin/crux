@@ -108,6 +108,13 @@ pub fn spawn_pty(
     Box<dyn MasterPty + Send>,
     Box<dyn portable_pty::Child + Send + Sync>,
 )> {
+    // Guard against empty command slice to prevent panic.
+    if let Some(args) = command {
+        if args.is_empty() {
+            return Err(anyhow::anyhow!("command must have at least one element"));
+        }
+    }
+
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
         rows: u16::try_from(size.rows).unwrap_or(u16::MAX),

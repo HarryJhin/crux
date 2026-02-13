@@ -82,6 +82,7 @@ impl CruxApp {
                 if let Some(parent_id) = parent_pane_id {
                     self.pane_parents.insert(pane_id, parent_id);
                 }
+                self.active_pane = Some(pane_id);
                 self.emit_pane_event(crux_protocol::PaneEvent::Created { pane_id });
 
                 let size = panel.read(cx).terminal_view_size(cx);
@@ -203,6 +204,7 @@ impl CruxApp {
                 if let Some(panel) = self.pane_registry.get(&params.pane_id) {
                     let fh = panel.read(cx).focus_handle(cx);
                     fh.focus(window);
+                    self.active_pane = Some(params.pane_id);
                     let _ = reply.send(Ok(()));
                 } else {
                     let _ = reply.send(Err(anyhow::anyhow!("pane {} not found", params.pane_id)));
@@ -447,13 +449,21 @@ impl CruxApp {
 
     /// Find the active pane ID (the one with focus).
     pub(crate) fn active_pane_id(&self, window: &Window, cx: &App) -> Option<PaneId> {
+        // Fast path: return cached active pane if it still exists.
+        if let Some(pane_id) = self.active_pane {
+            if self.pane_registry.contains_key(&pane_id) {
+                return Some(pane_id);
+            }
+        }
+
+        // Slow path: scan focus handles (fallback for cache miss or stale cache).
         for (id, panel) in &self.pane_registry {
             let fh = panel.read(cx).focus_handle(cx);
             if fh.contains_focused(window, cx) {
                 return Some(*id);
             }
         }
-        // Fallback: return the first pane.
+        // Final fallback: return the first pane.
         self.pane_registry.keys().next().copied()
     }
 
