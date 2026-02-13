@@ -1,4 +1,5 @@
 mod ipc_client;
+mod prompts;
 mod resources;
 mod server;
 mod tools;

@@ -2,24 +2,8 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
 
-use super::extract_lines;
+use super::{extract_lines, extract_lines_raw, PaneIdParam, ScrollbackParams};
 use crate::server::CruxMcpServer;
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct ContentPaneIdParam {
-    /// Pane ID (uses active pane if omitted)
-    pub pane_id: Option<u64>,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct ScrollbackTextParams {
-    /// Pane ID (uses active pane if omitted)
-    pub pane_id: Option<u64>,
-    /// Starting line offset (negative for scrollback)
-    pub offset: Option<i32>,
-    /// Number of lines to retrieve
-    pub limit: Option<i32>,
-}
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SessionPathParam {
@@ -33,49 +17,23 @@ pub(crate) fn router() -> rmcp::handler::server::router::tool::ToolRouter<CruxMc
 
 #[tool_router(router = content_tools)]
 impl CruxMcpServer {
-    /// Get raw text content from a terminal pane.
-    #[tool(description = "Get the raw text content from a terminal pane's visible area")]
-    async fn crux_get_raw_text(
-        &self,
-        Parameters(params): Parameters<ContentPaneIdParam>,
-    ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({
-                "pane_id": params.pane_id,
-                "include_escapes": false,
-            });
-            ipc.call(crux_protocol::method::PANE_GET_TEXT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
-
-        let output = extract_lines(&result);
-        Ok(CallToolResult::success(vec![Content::text(output)]))
-    }
-
     /// Get text with ANSI escape sequences from a terminal pane.
     #[tool(
         description = "Get terminal text including ANSI escape sequences for color and formatting"
     )]
     async fn crux_get_formatted_output(
         &self,
-        Parameters(params): Parameters<ContentPaneIdParam>,
+        Parameters(params): Parameters<PaneIdParam>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({
-                "pane_id": params.pane_id,
-                "include_escapes": true,
-            });
-            ipc.call(crux_protocol::method::PANE_GET_TEXT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let p = serde_json::json!({
+            "pane_id": params.pane_id,
+            "include_escapes": true,
+        });
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_GET_TEXT, p)
+            .await?;
 
-        let output = extract_lines(&result);
+        let output = extract_lines_raw(&result);
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
@@ -83,25 +41,21 @@ impl CruxMcpServer {
     #[tool(description = "Get scrollback text from a terminal pane with optional line range")]
     async fn crux_get_scrollback_text(
         &self,
-        Parameters(params): Parameters<ScrollbackTextParams>,
+        Parameters(params): Parameters<ScrollbackParams>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut p = serde_json::json!({
-                "pane_id": params.pane_id,
-                "include_escapes": false,
-            });
-            if let Some(start) = params.offset {
-                p["start_line"] = serde_json::json!(start);
-            }
-            if let Some((s, l)) = params.offset.zip(params.limit) {
-                p["end_line"] = serde_json::json!(s + l);
-            }
-            ipc.call(crux_protocol::method::PANE_GET_TEXT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let mut p = serde_json::json!({
+            "pane_id": params.pane_id,
+            "include_escapes": false,
+        });
+        if let Some(start) = params.offset {
+            p["start_line"] = serde_json::json!(start);
+        }
+        if let Some((s, l)) = params.offset.zip(params.limit) {
+            p["end_line"] = serde_json::json!(s + l);
+        }
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_GET_TEXT, p)
+            .await?;
 
         let output = extract_lines(&result);
         Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -113,18 +67,14 @@ impl CruxMcpServer {
     )]
     async fn crux_screenshot_pane(
         &self,
-        Parameters(params): Parameters<ContentPaneIdParam>,
+        Parameters(params): Parameters<PaneIdParam>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({
-                "pane_id": params.pane_id,
-            });
-            ipc.call(crux_protocol::method::PANE_GET_SNAPSHOT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let p = serde_json::json!({
+            "pane_id": params.pane_id,
+        });
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_GET_SNAPSHOT, p)
+            .await?;
 
         let output = serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
         Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -138,16 +88,12 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<SessionPathParam>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({
-                "path": params.path,
-            });
-            ipc.call(crux_protocol::method::SESSION_SAVE, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let p = serde_json::json!({
+            "path": params.path,
+        });
+        let result = self
+            .ipc_call(crux_protocol::method::SESSION_SAVE, p)
+            .await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "session saved".into()),
@@ -162,16 +108,12 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<SessionPathParam>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({
-                "path": params.path,
-            });
-            ipc.call(crux_protocol::method::SESSION_LOAD, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let p = serde_json::json!({
+            "path": params.path,
+        });
+        let result = self
+            .ipc_call(crux_protocol::method::SESSION_LOAD, p)
+            .await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "session loaded".into()),
@@ -182,62 +124,6 @@ impl CruxMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_content_pane_id_param_serde() {
-        let params = ContentPaneIdParam { pane_id: Some(42) };
-        let json = serde_json::to_string(&params).unwrap();
-        let parsed: ContentPaneIdParam = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.pane_id, Some(42));
-    }
-
-    #[test]
-    fn test_content_pane_id_param_none() {
-        let params = ContentPaneIdParam { pane_id: None };
-        let json = serde_json::to_string(&params).unwrap();
-        let parsed: ContentPaneIdParam = serde_json::from_str(&json).unwrap();
-        assert!(parsed.pane_id.is_none());
-    }
-
-    #[test]
-    fn test_scrollback_text_params_serde() {
-        let params = ScrollbackTextParams {
-            pane_id: Some(1),
-            offset: Some(-50),
-            limit: Some(25),
-        };
-        let json = serde_json::to_string(&params).unwrap();
-        let parsed: ScrollbackTextParams = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.pane_id, Some(1));
-        assert_eq!(parsed.offset, Some(-50));
-        assert_eq!(parsed.limit, Some(25));
-    }
-
-    #[test]
-    fn test_scrollback_text_params_all_none() {
-        let params = ScrollbackTextParams {
-            pane_id: None,
-            offset: None,
-            limit: None,
-        };
-        let json = serde_json::to_string(&params).unwrap();
-        let parsed: ScrollbackTextParams = serde_json::from_str(&json).unwrap();
-        assert!(parsed.pane_id.is_none());
-        assert!(parsed.offset.is_none());
-        assert!(parsed.limit.is_none());
-    }
-
-    #[test]
-    fn test_scrollback_text_params_positive_offset() {
-        let params = ScrollbackTextParams {
-            pane_id: Some(99),
-            offset: Some(100),
-            limit: Some(10),
-        };
-        let json = serde_json::to_string(&params).unwrap();
-        let parsed: ScrollbackTextParams = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.offset, Some(100));
-    }
 
     #[test]
     fn test_extract_lines_with_lines_array() {

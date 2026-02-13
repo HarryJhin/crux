@@ -5,6 +5,38 @@ use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
 use super::extract_lines;
 use crate::server::CruxMcpServer;
 
+/// Dangerous command patterns that should be rejected
+const COMMAND_DENYLIST: &[&str] = &[
+    "rm -rf /",
+    "rm -rf /*",
+    "rm -rf ~",
+    "mkfs",
+    "dd if=/dev/",
+    "dd if= /dev/",
+    ":(){ :|:& };:",
+    "> /dev/sd",
+    "chmod -r 777 /",
+    "chmod -rf 777 /",
+    "chmod 777 /",
+];
+
+/// Validates a command against the denylist
+fn validate_command(cmd: &str) -> Result<(), String> {
+    let cmd_lower = cmd.to_lowercase();
+
+    for pattern in COMMAND_DENYLIST {
+        let pattern_lower = pattern.to_lowercase();
+        if cmd_lower.contains(&pattern_lower) {
+            return Err(format!(
+                "Command rejected: contains dangerous pattern '{}'. This command could cause system damage.",
+                pattern
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExecuteCommandParams {
     /// Pane ID (uses active pane if omitted)
@@ -61,52 +93,56 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<ExecuteCommandParams>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            // Capture output before sending command to detect new output
-            let before = ipc.call(
+        // Validate command before execution
+        if let Err(reason) = validate_command(&params.command) {
+            return Err(McpError::invalid_params(reason, None));
+        }
+
+        // Capture output before sending command to detect new output
+        let before = self
+            .ipc_call(
                 crux_protocol::method::PANE_GET_TEXT,
                 serde_json::json!({ "pane_id": params.pane_id }),
-            )?;
-            let before_len = before
+            )
+            .await?;
+        let before_len = before
+            .get("lines")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+
+        let send_params = serde_json::json!({
+            "pane_id": params.pane_id,
+            "text": format!("{}\n", params.command),
+            "bracketed_paste": false,
+        });
+        self.ipc_call(crux_protocol::method::PANE_SEND_TEXT, send_params)
+            .await?;
+
+        // Poll for new output with timeout
+        let timeout = std::time::Duration::from_millis(500);
+        let poll_interval = std::time::Duration::from_millis(50);
+        let start = std::time::Instant::now();
+
+        let result = loop {
+            tokio::time::sleep(poll_interval).await;
+
+            let after = self
+                .ipc_call(
+                    crux_protocol::method::PANE_GET_TEXT,
+                    serde_json::json!({ "pane_id": params.pane_id }),
+                )
+                .await?;
+            let after_len = after
                 .get("lines")
                 .and_then(|v| v.as_array())
                 .map(|a| a.len())
                 .unwrap_or(0);
 
-            let send_params = serde_json::json!({
-                "pane_id": params.pane_id,
-                "text": format!("{}\n", params.command),
-                "bracketed_paste": false,
-            });
-            ipc.call(crux_protocol::method::PANE_SEND_TEXT, send_params)?;
-
-            // Poll for new output with timeout
-            let timeout = std::time::Duration::from_millis(500);
-            let poll_interval = std::time::Duration::from_millis(50);
-            let start = std::time::Instant::now();
-
-            loop {
-                std::thread::sleep(poll_interval);
-
-                let after = ipc.call(
-                    crux_protocol::method::PANE_GET_TEXT,
-                    serde_json::json!({ "pane_id": params.pane_id }),
-                )?;
-                let after_len = after
-                    .get("lines")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0);
-
-                if after_len > before_len || start.elapsed() >= timeout {
-                    return Ok(after);
-                }
+            if after_len > before_len || start.elapsed() >= timeout {
+                break after;
             }
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e: anyhow::Error| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        };
 
         let output = extract_lines(&result);
         Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -121,18 +157,14 @@ impl CruxMcpServer {
         Parameters(params): Parameters<SendKeysParams>,
     ) -> Result<CallToolResult, McpError> {
         let text = translate_keys(&params.keys);
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({
-                "pane_id": params.pane_id,
-                "text": text,
-                "bracketed_paste": false,
-            });
-            ipc.call(crux_protocol::method::PANE_SEND_TEXT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let p = serde_json::json!({
+            "pane_id": params.pane_id,
+            "text": text,
+            "bracketed_paste": false,
+        });
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_SEND_TEXT, p)
+            .await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "keys sent".into()),
@@ -145,18 +177,14 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<SendTextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({
-                "pane_id": params.pane_id,
-                "text": params.text,
-                "bracketed_paste": params.bracketed_paste.unwrap_or(false),
-            });
-            ipc.call(crux_protocol::method::PANE_SEND_TEXT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let p = serde_json::json!({
+            "pane_id": params.pane_id,
+            "text": params.text,
+            "bracketed_paste": params.bracketed_paste.unwrap_or(false),
+        });
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_SEND_TEXT, p)
+            .await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "text sent".into()),
@@ -169,17 +197,13 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<GetOutputParams>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut p = serde_json::json!({ "pane_id": params.pane_id });
-            if let Some(n) = params.lines {
-                p["start_line"] = serde_json::json!(-(n as i32));
-            }
-            ipc.call(crux_protocol::method::PANE_GET_TEXT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let mut p = serde_json::json!({ "pane_id": params.pane_id });
+        if let Some(n) = params.lines {
+            p["start_line"] = serde_json::json!(-(n as i32));
+        }
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_GET_TEXT, p)
+            .await?;
 
         let output = extract_lines(&result);
         Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -191,44 +215,58 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<WaitForOutputParams>,
     ) -> Result<CallToolResult, McpError> {
-        let re = regex::Regex::new(&params.pattern)
-            .map_err(|e| McpError::invalid_params(format!("invalid regex: {e}"), None))?;
+        // Validate pattern length
+        if params.pattern.len() > 1024 {
+            return Err(McpError::invalid_params(
+                "Regex pattern too long (max 1024 chars). Simplify the pattern.",
+                None,
+            ));
+        }
+
+        // Build regex with size limit
+        let re = regex::RegexBuilder::new(&params.pattern)
+            .size_limit(1 << 20) // 1MB compiled regex limit
+            .build()
+            .map_err(|e| {
+                McpError::invalid_params(format!("Invalid regex pattern: {e}. Check syntax."), None)
+            })?;
 
         let timeout = std::time::Duration::from_millis(params.timeout_ms.unwrap_or(10000));
         let poll_interval = std::time::Duration::from_millis(200);
-        let ipc = self.ipc.clone();
-        let pane_id = params.pane_id;
+        let start = std::time::Instant::now();
 
-        let result = tokio::task::spawn_blocking(move || {
-            let start = std::time::Instant::now();
-            loop {
-                let p = serde_json::json!({ "pane_id": pane_id });
-                let text_result = ipc.call(crux_protocol::method::PANE_GET_TEXT, p)?;
+        let result: Option<serde_json::Value> = loop {
+            let p = serde_json::json!({ "pane_id": params.pane_id });
+            let text_result = self
+                .ipc_call(crux_protocol::method::PANE_GET_TEXT, p)
+                .await?;
 
-                if let Some(lines) = text_result.get("lines").and_then(|v| v.as_array()) {
-                    for line in lines {
-                        if let Some(s) = line.as_str() {
-                            if re.is_match(s) {
-                                return Ok(Some(serde_json::json!({
-                                    "matched": true,
-                                    "line": s,
-                                    "elapsed_ms": start.elapsed().as_millis() as u64,
-                                })));
-                            }
+            let mut found = None;
+            if let Some(lines) = text_result.get("lines").and_then(|v| v.as_array()) {
+                for line in lines {
+                    if let Some(s) = line.as_str() {
+                        if re.is_match(s) {
+                            found = Some(serde_json::json!({
+                                "matched": true,
+                                "line": s,
+                                "elapsed_ms": start.elapsed().as_millis() as u64,
+                            }));
+                            break;
                         }
                     }
                 }
-
-                if start.elapsed() >= timeout {
-                    return Ok(None);
-                }
-
-                std::thread::sleep(poll_interval);
             }
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e: anyhow::Error| McpError::internal_error(format!("IPC error: {e}"), None))?;
+
+            if let Some(matched) = found {
+                break Some(matched);
+            }
+
+            if start.elapsed() >= timeout {
+                break None;
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        };
 
         match result {
             Some(matched) => Ok(CallToolResult::success(vec![Content::text(
@@ -447,5 +485,75 @@ mod tests {
         let output = extract_lines(&result);
         // Should fall back to pretty-printed JSON
         assert!(output.contains("\"lines\""));
+    }
+
+    #[test]
+    fn test_regex_pattern_max_length() {
+        // Pattern over 1024 chars should be rejected
+        let long_pattern = "a".repeat(1025);
+        assert!(long_pattern.len() > 1024);
+    }
+
+    #[test]
+    fn test_validate_command_rm_rf_slash() {
+        assert!(validate_command("rm -rf /").is_err());
+        assert!(validate_command("rm -rf /*").is_err());
+        assert!(validate_command("rm -rf ~").is_err());
+        assert!(validate_command("sudo rm -rf /").is_err());
+    }
+
+    #[test]
+    fn test_validate_command_mkfs() {
+        assert!(validate_command("mkfs /dev/sda1").is_err());
+        assert!(validate_command("sudo mkfs.ext4 /dev/sdb").is_err());
+        assert!(validate_command("MKFS /dev/sda").is_err());
+    }
+
+    #[test]
+    fn test_validate_command_dd() {
+        assert!(validate_command("dd if=/dev/zero of=/dev/sda").is_err());
+        assert!(validate_command("DD IF=/dev/urandom of=/dev/sdb").is_err());
+    }
+
+    #[test]
+    fn test_validate_command_fork_bomb() {
+        assert!(validate_command(":(){ :|:& };:").is_err());
+        assert!(validate_command(":(){ :|:& };: &").is_err());
+    }
+
+    #[test]
+    fn test_validate_command_direct_disk_write() {
+        assert!(validate_command("echo test > /dev/sda").is_err());
+        assert!(validate_command("cat file > /dev/sdb").is_err());
+        assert!(validate_command("> /dev/sdc").is_err());
+    }
+
+    #[test]
+    fn test_validate_command_chmod_root() {
+        assert!(validate_command("chmod -R 777 /").is_err());
+        assert!(validate_command("chmod -rf 777 /").is_err());
+        assert!(validate_command("chmod 777 /").is_err());
+        assert!(validate_command("CHMOD -R 777 /").is_err());
+    }
+
+    #[test]
+    fn test_validate_command_safe_commands() {
+        assert!(validate_command("ls -la").is_ok());
+        assert!(validate_command("echo hello world").is_ok());
+        assert!(validate_command("cargo build").is_ok());
+        assert!(validate_command("git status").is_ok());
+        assert!(validate_command("cd /home/user").is_ok());
+        assert!(validate_command("cat file.txt").is_ok());
+        assert!(validate_command("mkdir -p /tmp/mydir").is_ok());
+        assert!(validate_command("chmod 755 script.sh").is_ok());
+        assert!(validate_command("rm -rf ./build").is_ok());
+        assert!(validate_command("dd if=input.img of=output.img").is_ok());
+    }
+
+    #[test]
+    fn test_validate_command_case_insensitive() {
+        assert!(validate_command("RM -RF /").is_err());
+        assert!(validate_command("Rm -Rf /").is_err());
+        assert!(validate_command("rM -rF /").is_err());
     }
 }

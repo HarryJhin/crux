@@ -59,28 +59,23 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<CreatePaneParams>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let direction = match params.direction.unwrap_or(SplitDirection::Right) {
-                SplitDirection::Right => "right",
-                SplitDirection::Left => "left",
-                SplitDirection::Up => "up",
-                SplitDirection::Down => "down",
-            };
-            let mut p = serde_json::json!({
-                "direction": direction,
-            });
-            if let Some(cwd) = params.cwd {
-                p["cwd"] = serde_json::Value::String(cwd);
-            }
-            if let Some(command) = params.command {
-                p["command"] = serde_json::json!([command]);
-            }
-            ipc.call(crux_protocol::method::PANE_SPLIT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let direction = match params.direction.unwrap_or(SplitDirection::Right) {
+            SplitDirection::Right => "right",
+            SplitDirection::Left => "left",
+            SplitDirection::Up => "up",
+            SplitDirection::Down => "down",
+        };
+        let mut p = serde_json::json!({
+            "direction": direction,
+        });
+        if let Some(cwd) = params.cwd {
+            p["cwd"] = serde_json::Value::String(cwd);
+        }
+        if let Some(command) = params.command {
+            p["command"] = serde_json::json!([command]);
+        }
+
+        let result = self.ipc_call(crux_protocol::method::PANE_SPLIT, p).await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()),
@@ -93,17 +88,11 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<ClosePaneParams>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({
-                "pane_id": params.pane_id,
-                "force": params.force.unwrap_or(false),
-            });
-            ipc.call(crux_protocol::method::PANE_CLOSE, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let p = serde_json::json!({
+            "pane_id": params.pane_id,
+            "force": params.force.unwrap_or(false),
+        });
+        let result = self.ipc_call(crux_protocol::method::PANE_CLOSE, p).await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "pane closed".into()),
@@ -116,14 +105,10 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<FocusPaneParams>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let p = serde_json::json!({ "pane_id": params.pane_id });
-            ipc.call(crux_protocol::method::PANE_ACTIVATE, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let p = serde_json::json!({ "pane_id": params.pane_id });
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_ACTIVATE, p)
+            .await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "pane focused".into()),
@@ -133,13 +118,9 @@ impl CruxMcpServer {
     /// List all terminal panes.
     #[tool(description = "List all terminal panes with their IDs, sizes, and status")]
     async fn crux_list_panes(&self) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            ipc.call(crux_protocol::method::PANE_LIST, serde_json::json!({}))
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_LIST, serde_json::json!({}))
+            .await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()),
@@ -152,22 +133,16 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<ResizePaneParams>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut p = serde_json::json!({
-                "pane_id": params.pane_id,
-            });
-            if let Some(w) = params.width {
-                p["width"] = serde_json::json!(w);
-            }
-            if let Some(h) = params.height {
-                p["height"] = serde_json::json!(h);
-            }
-            ipc.call(crux_protocol::method::PANE_RESIZE, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let mut p = serde_json::json!({
+            "pane_id": params.pane_id,
+        });
+        if let Some(w) = params.width {
+            p["width"] = serde_json::json!(w);
+        }
+        if let Some(h) = params.height {
+            p["height"] = serde_json::json!(h);
+        }
+        let result = self.ipc_call(crux_protocol::method::PANE_RESIZE, p).await?;
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "pane resized".into()),

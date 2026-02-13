@@ -2,7 +2,6 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
 
-use super::extract_lines;
 use crate::server::CruxMcpServer;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -27,55 +26,6 @@ pub(crate) fn router() -> rmcp::handler::server::router::tool::ToolRouter<CruxMc
 
 #[tool_router(router = state_tools)]
 impl CruxMcpServer {
-    /// Get the current working directory of a terminal pane.
-    #[tool(description = "Get the current working directory of a terminal pane")]
-    async fn crux_get_current_directory(
-        &self,
-        Parameters(params): Parameters<PaneIdParam>,
-    ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            ipc.call(crux_protocol::method::PANE_LIST, serde_json::json!({}))
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
-
-        let pane = find_pane(&result, params.pane_id)?;
-        let cwd = pane
-            .get("cwd")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-
-        Ok(CallToolResult::success(vec![Content::text(cwd)]))
-    }
-
-    /// Get the running process info for a terminal pane.
-    #[tool(description = "Get the running process PID in a terminal pane")]
-    async fn crux_get_running_process(
-        &self,
-        Parameters(params): Parameters<PaneIdParam>,
-    ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            ipc.call(crux_protocol::method::PANE_LIST, serde_json::json!({}))
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
-
-        let pane = find_pane(&result, params.pane_id)?;
-        let pid = pane.get("pid");
-
-        let output = match pid {
-            Some(serde_json::Value::Number(n)) => format!("PID: {n}"),
-            Some(serde_json::Value::Null) | None => "no foreground process info available".into(),
-            Some(v) => format!("PID: {v}"),
-        };
-
-        Ok(CallToolResult::success(vec![Content::text(output)]))
-    }
-
     /// Get full state of a terminal pane.
     #[tool(
         description = "Get the full state of a terminal pane including size, title, cursor position"
@@ -84,13 +34,9 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<PaneIdParam>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            ipc.call(crux_protocol::method::PANE_LIST, serde_json::json!({}))
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+        let result = self
+            .ipc_call(crux_protocol::method::PANE_LIST, serde_json::json!({}))
+            .await?;
 
         let pane = find_pane(&result, params.pane_id)?;
 
@@ -105,16 +51,12 @@ impl CruxMcpServer {
         &self,
         Parameters(params): Parameters<PaneIdParam>,
     ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            ipc.call(
+        let result = self
+            .ipc_call(
                 crux_protocol::method::PANE_GET_SELECTION,
                 serde_json::json!({ "pane_id": params.pane_id }),
             )
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
+            .await?;
 
         let text = result.get("text").and_then(|v| v.as_str()).unwrap_or("");
         let has_selection = result
@@ -129,33 +71,6 @@ impl CruxMcpServer {
                 "no text is currently selected",
             )]))
         }
-    }
-
-    /// Get scrollback buffer content from a terminal pane.
-    #[tool(
-        description = "Get scrollback buffer content from a terminal pane with optional line range"
-    )]
-    async fn crux_get_scrollback(
-        &self,
-        Parameters(params): Parameters<ScrollbackParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let ipc = self.ipc.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut p = serde_json::json!({ "pane_id": params.pane_id });
-            if let Some(start) = params.offset {
-                p["start_line"] = serde_json::json!(start);
-            }
-            if let Some((s, l)) = params.offset.zip(params.limit) {
-                p["end_line"] = serde_json::json!(s + l);
-            }
-            ipc.call(crux_protocol::method::PANE_GET_TEXT, p)
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-        .map_err(|e| McpError::internal_error(format!("IPC error: {e}"), None))?;
-
-        let output = extract_lines(&result);
-        Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 }
 
@@ -322,23 +237,5 @@ mod tests {
         });
         let result = find_pane(&list_result, None);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_extract_lines_with_lines() {
-        let result = serde_json::json!({
-            "lines": ["line 1", "line 2", "line 3"]
-        });
-        let output = extract_lines(&result);
-        assert_eq!(output, "line 1\nline 2\nline 3");
-    }
-
-    #[test]
-    fn test_extract_lines_without_lines() {
-        let result = serde_json::json!({
-            "data": "value"
-        });
-        let output = extract_lines(&result);
-        assert!(output.contains("\"data\""));
     }
 }
