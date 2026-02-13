@@ -37,6 +37,7 @@ impl IpcClient {
     pub fn connect_to(path: PathBuf) -> Result<Self> {
         let stream = UnixStream::connect(&path)
             .with_context(|| format!("failed to connect to {}", path.display()))?;
+        stream.set_read_timeout(Some(Duration::from_secs(30)))?;
         Ok(Self {
             stream: Mutex::new(stream),
             next_id: Mutex::new(1),
@@ -68,8 +69,8 @@ impl IpcClient {
 
     /// Send a JSON-RPC request and wait for the response.
     fn call_inner(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
-        let mut stream = self.stream.lock().unwrap();
-        let mut next_id = self.next_id.lock().unwrap();
+        let mut stream = self.stream.lock().map_err(|_| anyhow::anyhow!("IPC client mutex poisoned"))?;
+        let mut next_id = self.next_id.lock().map_err(|_| anyhow::anyhow!("IPC client mutex poisoned"))?;
         let id = *next_id;
         *next_id += 1;
 

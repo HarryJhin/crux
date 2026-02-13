@@ -1070,16 +1070,16 @@ impl Render for CruxTerminalView {
                 .absolute()
                 .size_full(),
             )
-            .child(render_terminal_canvas(
+            .child(render_terminal_canvas(crate::element::RenderConfig {
                 content,
                 cell_width,
                 cell_height,
-                self.font.clone(),
-                self.font_size,
+                font: self.font.clone(),
+                font_size: self.font_size,
                 focused,
                 bell_active,
                 cursor_visible,
                 marked_text,
-            ))
+            }))
     }
 }

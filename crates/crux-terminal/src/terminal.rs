@@ -240,11 +240,6 @@ impl CruxTerminal {
         f(&mut term)
     }
 
-    /// Get a shared reference to the underlying `Arc<FairMutex<Term>>`.
-    pub fn term_arc(&self) -> &Arc<FairMutex<Term<CruxEventListener>>> {
-        &self.term
-    }
-
     /// Create a snapshot of the terminal content for rendering.
     ///
     /// This locks the terminal briefly to copy all visible cells,

@@ -23,21 +23,34 @@ pub struct TerminalPrepaintState {
     composition: Option<(ShapedLine, gpui::Point<Pixels>, PaintQuad)>,
 }
 
+/// Configuration for rendering terminal content.
+pub struct RenderConfig {
+    pub content: TerminalContent,
+    pub cell_width: Pixels,
+    pub cell_height: Pixels,
+    pub font: Font,
+    pub font_size: Pixels,
+    pub focused: bool,
+    pub bell_active: bool,
+    pub cursor_visible: bool,
+    pub marked_text: Option<String>,
+}
+
 /// Render the terminal content as a canvas element.
 ///
 /// Returns a sized canvas that paints terminal cells, backgrounds, selection, and cursor.
-#[allow(clippy::too_many_arguments)]
-pub fn render_terminal_canvas(
-    content: TerminalContent,
-    cell_width: Pixels,
-    cell_height: Pixels,
-    font: Font,
-    font_size: Pixels,
-    focused: bool,
-    bell_active: bool,
-    cursor_visible: bool,
-    marked_text: Option<String>,
-) -> impl IntoElement {
+pub fn render_terminal_canvas(config: RenderConfig) -> impl IntoElement {
+    let RenderConfig {
+        content,
+        cell_width,
+        cell_height,
+        font,
+        font_size,
+        focused,
+        bell_active,
+        cursor_visible,
+        marked_text,
+    } = config;
     let fg_color = colors::foreground_hsla();
     let bg_color = colors::background_hsla();
     let cursor_color = colors::cursor_hsla();
