@@ -26,7 +26,7 @@ const BACKGROUND: u32 = 0x1e1e2e;
 const CURSOR: u32 = 0xf5e0dc;
 
 /// Convert an alacritty `Color` to a GPUI `Hsla`.
-pub fn color_to_hsla(color: Color) -> Hsla {
+pub(crate) fn color_to_hsla(color: Color) -> Hsla {
     match color {
         Color::Named(named) => named_color_to_hsla(named),
         Color::Spec(rgb) => rgb_to_hsla(rgb.r, rgb.g, rgb.b),
@@ -118,17 +118,17 @@ fn rgb_to_hsla(r: u8, g: u8, b: u8) -> Hsla {
 }
 
 /// Background color as GPUI Hsla.
-pub fn background_hsla() -> Hsla {
+pub(crate) fn background_hsla() -> Hsla {
     hex_to_hsla(BACKGROUND)
 }
 
 /// Foreground color as GPUI Hsla.
-pub fn foreground_hsla() -> Hsla {
+pub(crate) fn foreground_hsla() -> Hsla {
     hex_to_hsla(FOREGROUND)
 }
 
 /// Cursor color as GPUI Hsla.
-pub fn cursor_hsla() -> Hsla {
+pub(crate) fn cursor_hsla() -> Hsla {
     hex_to_hsla(CURSOR)
 }
 

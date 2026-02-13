@@ -13,6 +13,16 @@ use crate::types::{
 // JSON-RPC 2.0 types
 // ---------------------------------------------------------------------------
 
+/// Content type for clipboard operations.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipboardContentType {
+    Text,
+    Image,
+    #[default]
+    Auto,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
@@ -291,12 +301,8 @@ pub struct HandshakeResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardReadParams {
     /// Preferred content type: "text", "image", "auto" (default: "auto").
-    #[serde(default = "default_clipboard_type")]
-    pub content_type: String,
-}
-
-fn default_clipboard_type() -> String {
-    "auto".to_string()
+    #[serde(default)]
+    pub content_type: ClipboardContentType,
 }
 
 /// Result of `crux:clipboard/read` — tagged union for type-safe responses.
@@ -317,7 +323,7 @@ pub enum ClipboardReadResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardWriteParams {
     /// Content type: "text" or "image".
-    pub content_type: String,
+    pub content_type: ClipboardContentType,
     /// Text content (when content_type is "text").
     pub text: Option<String>,
     /// Path to PNG file (when content_type is "image").
@@ -453,6 +459,6 @@ mod tests {
     #[test]
     fn clipboard_read_params_default() {
         let params: ClipboardReadParams = serde_json::from_str("{}").unwrap();
-        assert_eq!(params.content_type, "auto");
+        assert_eq!(params.content_type, ClipboardContentType::Auto);
     }
 }

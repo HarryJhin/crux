@@ -15,7 +15,8 @@ pub mod traits;
 pub use event::{CruxEventListener, SemanticZone, SemanticZoneType, TerminalEvent};
 pub use pty::ensure_terminfo_installed;
 pub use terminal::{
-    CruxTerminal, CursorState, DamageState, IndexedCell, LineDamage, TerminalContent, TerminalSize,
+    extract_text_lines, CruxTerminal, CursorState, DamageState, IndexedCell, LineDamage,
+    TerminalContent, TerminalSize,
 };
 pub use traits::Terminal;
 

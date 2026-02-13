@@ -146,15 +146,7 @@ impl CruxTerminalPanel {
         // Single snapshot call to avoid double content() invocation.
         let content = view.terminal_content_snapshot();
 
-        // Extract text lines from the snapshot.
-        let mut lines: Vec<String> = vec![String::new(); content.rows];
-        for cell in &content.cells {
-            let row = cell.point.line.0 as usize;
-            if row < content.rows {
-                lines[row].push(cell.c);
-            }
-        }
-        let lines: Vec<String> = lines.iter().map(|line| line.trim_end().to_string()).collect();
+        let lines = view.get_text_lines();
 
         (
             lines,
@@ -170,15 +162,7 @@ impl CruxTerminalPanel {
         let content = view.terminal_content_snapshot();
         let size = view.terminal_size();
 
-        // Extract text lines from the snapshot.
-        let mut lines: Vec<String> = vec![String::new(); content.rows];
-        for cell in &content.cells {
-            let row = cell.point.line.0 as usize;
-            if row < content.rows {
-                lines[row].push(cell.c);
-            }
-        }
-        let lines: Vec<String> = lines.iter().map(|line| line.trim_end().to_string()).collect();
+        let lines = view.get_text_lines();
 
         let cursor_shape = format!("{:?}", content.cursor.shape);
         crux_protocol::GetSnapshotResult {

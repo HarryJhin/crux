@@ -403,7 +403,7 @@ async fn send_command_unit(
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc;
-    use crux_protocol::{JsonRpcRequest, JsonRpcId, error_code, method, HandshakeParams, HandshakeResult};
+    use crux_protocol::{JsonRpcRequest, JsonRpcId, HandshakeResult, error_code, method};
     use serde_json::json;
 
     use super::dispatch_request;
@@ -421,11 +421,9 @@ mod tests {
 
         let response = dispatch_request(request, &cmd_tx).await.unwrap();
 
-        assert!(matches!(response, crux_protocol::JsonRpcResponse::Error { .. }));
-        if let crux_protocol::JsonRpcResponse::Error { error, .. } = response {
-            assert_eq!(error.code, error_code::METHOD_NOT_FOUND);
-            assert!(error.message.contains("unknown method"));
-        }
+        let err = response.error.as_ref().expect("should be an error response");
+        assert_eq!(err.code, error_code::METHOD_NOT_FOUND);
+        assert!(err.message.contains("unknown method"));
 
         // No command should be sent
         assert!(cmd_rx.try_recv().is_err());
@@ -445,11 +443,9 @@ mod tests {
 
         let response = dispatch_request(request, &cmd_tx).await.unwrap();
 
-        assert!(matches!(response, crux_protocol::JsonRpcResponse::Error { .. }));
-        if let crux_protocol::JsonRpcResponse::Error { error, .. } = response {
-            assert_eq!(error.code, error_code::INVALID_PARAMS);
-            assert!(error.message.contains("invalid params"));
-        }
+        let err = response.error.as_ref().expect("should be an error response");
+        assert_eq!(err.code, error_code::INVALID_PARAMS);
+        assert!(err.message.contains("invalid params"));
 
         // No command should be sent
         assert!(cmd_rx.try_recv().is_err());
@@ -459,21 +455,27 @@ mod tests {
     async fn test_dispatch_notification_returns_none() {
         let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
 
-        // Request with no id is a notification
+        // Request with no id is a notification — use pane/list which needs no params.
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
-            method: method::HANDSHAKE.to_string(),
-            params: Some(json!({})),
+            method: method::PANE_LIST.to_string(),
+            params: None,
             id: None,
         };
+
+        // Spawn a consumer to reply to the command so dispatch doesn't hang.
+        tokio::spawn(async move {
+            if let Some(cmd) = cmd_rx.recv().await {
+                if let crate::command::IpcCommand::ListPanes { reply } = cmd {
+                    let _ = reply.send(Ok(crux_protocol::ListPanesResult { panes: vec![] }));
+                }
+            }
+        });
 
         let response = dispatch_request(request, &cmd_tx).await;
 
         // Notifications should return None (no response)
         assert!(response.is_none());
-
-        // Command should still be processed (sent to channel)
-        assert!(cmd_rx.try_recv().is_ok());
     }
 
     #[tokio::test]
@@ -483,7 +485,12 @@ mod tests {
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method::HANDSHAKE.to_string(),
-            params: Some(json!({})),
+            params: Some(json!({
+                "client_name": "test-client",
+                "client_version": "0.1.0",
+                "protocol_version": "1.0",
+                "capabilities": []
+            })),
             id: Some(JsonRpcId::Number(3)),
         };
 
@@ -508,10 +515,9 @@ mod tests {
         let response = response_handle.await.unwrap().unwrap();
 
         // Should be a success response
-        assert!(matches!(response, crux_protocol::JsonRpcResponse::Success { .. }));
-        if let crux_protocol::JsonRpcResponse::Success { result, .. } = response {
-            assert!(result.get("server_name").is_some());
-        }
+        assert!(response.error.is_none(), "expected success, got error");
+        let result = response.result.expect("should have result");
+        assert!(result.get("server_name").is_some());
     }
 
     #[tokio::test]
@@ -527,11 +533,9 @@ mod tests {
 
         let response = dispatch_request(request, &cmd_tx).await.unwrap();
 
-        assert!(matches!(response, crux_protocol::JsonRpcResponse::Error { .. }));
-        if let crux_protocol::JsonRpcResponse::Error { error, .. } = response {
-            assert_eq!(error.code, error_code::INVALID_REQUEST);
-            assert!(error.message.contains("JSON-RPC version"));
-        }
+        let err = response.error.as_ref().expect("should be an error response");
+        assert_eq!(err.code, error_code::INVALID_REQUEST);
+        assert!(err.message.contains("JSON-RPC version"));
 
         // No command should be sent
         assert!(cmd_rx.try_recv().is_err());

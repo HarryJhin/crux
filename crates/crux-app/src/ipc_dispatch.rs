@@ -48,19 +48,14 @@ impl CruxApp {
                     .or_else(|| self.active_pane_id(window, cx));
 
                 let pane_id = self.allocate_pane_id();
-                let panel = cx.new(|cx| {
-                    CruxTerminalPanel::new(
-                        pane_id,
-                        params.cwd.as_deref(),
-                        params.command.as_deref(),
-                        params.env.as_ref(),
-                        self.config.font.clone(),
-                        self.config.colors.clone(),
-                        self.config.terminal.clone(),
-                        window,
-                        cx,
-                    )
-                });
+                let panel = self.create_terminal_panel(
+                    pane_id,
+                    params.cwd.as_deref(),
+                    params.command.as_deref(),
+                    params.env.as_ref(),
+                    window,
+                    cx,
+                );
                 self.pane_registry.insert(pane_id, panel.clone());
 
                 // Find the target tab panel.
@@ -287,7 +282,7 @@ impl CruxApp {
                             Ok(content) => {
                                 let read_result = match content {
                                     crux_clipboard::ClipboardContent::Text(text) => {
-                                        if params.content_type == "image" {
+                                        if params.content_type == crux_protocol::ClipboardContentType::Image {
                                             Err(anyhow::anyhow!("no image in clipboard"))
                                         } else {
                                             Ok(crux_protocol::ClipboardReadResult::Text { text })
@@ -337,8 +332,8 @@ impl CruxApp {
                 #[cfg(target_os = "macos")]
                 {
                     if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
-                        let result = match params.content_type.as_str() {
-                            "text" => {
+                        let result = match params.content_type {
+                            crux_protocol::ClipboardContentType::Text => {
                                 if let Some(text) = &params.text {
                                     crux_clipboard::Clipboard::write_text(text, mtm)
                                         .map_err(|e| anyhow::anyhow!("{e}"))
@@ -348,7 +343,7 @@ impl CruxApp {
                                     ))
                                 }
                             }
-                            "image" => {
+                            crux_protocol::ClipboardContentType::Image => {
                                 if let Some(path) = &params.image_path {
                                     let path_obj = std::path::Path::new(path);
                                     let ext = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -369,7 +364,7 @@ impl CruxApp {
                                     ))
                                 }
                             }
-                            other => Err(anyhow::anyhow!("unsupported content_type: {other}")),
+                            crux_protocol::ClipboardContentType::Auto => Err(anyhow::anyhow!("content_type 'auto' not supported for clipboard write"))
                         };
                         let _ = reply.send(result);
                     } else {
@@ -519,9 +514,8 @@ impl CruxApp {
         cx: &App,
         depth: usize,
     ) -> Option<(Entity<StackPanel>, usize)> {
-        const MAX_DOCK_DEPTH: usize = 100;
-        if depth > MAX_DOCK_DEPTH {
-            log::warn!("find_stack_panel_containing: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
+        if depth > crate::app::MAX_DOCK_DEPTH {
+            log::warn!("find_stack_panel_containing: max depth {} exceeded, stopping recursion", crate::app::MAX_DOCK_DEPTH);
             return None;
         }
         match item {
@@ -557,9 +551,8 @@ impl CruxApp {
 
     /// Check if a DockItem (recursively) contains the target pane view.
     fn dock_item_contains_pane(item: &DockItem, target: &Arc<dyn PanelView>, _cx: &App, depth: usize) -> bool {
-        const MAX_DOCK_DEPTH: usize = 100;
-        if depth > MAX_DOCK_DEPTH {
-            log::warn!("dock_item_contains_pane: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
+        if depth > crate::app::MAX_DOCK_DEPTH {
+            log::warn!("dock_item_contains_pane: max depth {} exceeded, stopping recursion", crate::app::MAX_DOCK_DEPTH);
             return false;
         }
         match item {
@@ -685,16 +678,16 @@ mod tests {
     #[test]
     fn test_clipboard_params() {
         let read_params = ClipboardReadParams {
-            content_type: "text".into(),
+            content_type: crux_protocol::ClipboardContentType::Text,
         };
-        assert_eq!(read_params.content_type, "text");
+        assert_eq!(read_params.content_type, crux_protocol::ClipboardContentType::Text);
 
         let write_params = ClipboardWriteParams {
-            content_type: "text".into(),
+            content_type: crux_protocol::ClipboardContentType::Text,
             text: Some("hello".into()),
             image_path: None,
         };
-        assert_eq!(write_params.content_type, "text");
+        assert_eq!(write_params.content_type, crux_protocol::ClipboardContentType::Text);
         assert_eq!(write_params.text.as_deref(), Some("hello"));
         assert!(write_params.image_path.is_none());
     }

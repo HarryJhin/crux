@@ -215,8 +215,10 @@ impl CruxTerminal {
         if let Err(e) = self.master_pty.resize(portable_pty::PtySize {
             rows: u16::try_from(size.rows).unwrap_or(u16::MAX),
             cols: u16::try_from(size.cols).unwrap_or(u16::MAX),
-            pixel_width: u16::try_from((size.cols as f32 * size.cell_width) as usize).unwrap_or(u16::MAX),
-            pixel_height: u16::try_from((size.rows as f32 * size.cell_height) as usize).unwrap_or(u16::MAX),
+            pixel_width: u16::try_from((size.cols as f32 * size.cell_width) as usize)
+                .unwrap_or(u16::MAX),
+            pixel_height: u16::try_from((size.rows as f32 * size.cell_height) as usize)
+                .unwrap_or(u16::MAX),
         }) {
             log::warn!("failed to resize PTY: {}", e);
         }
@@ -447,6 +449,25 @@ impl CruxTerminal {
     pub fn child_pid(&self) -> Option<u32> {
         self.child.process_id()
     }
+}
+
+/// Extract text lines from terminal content cells.
+///
+/// This helper consolidates the logic for building text lines from
+/// a TerminalContent snapshot, used by get_text IPC handlers and view methods.
+pub fn extract_text_lines(content: &TerminalContent) -> Vec<String> {
+    let mut lines: Vec<String> = vec![String::new(); content.rows];
+    for cell in &content.cells {
+        let row = cell.point.line.0 as usize;
+        if row < content.rows {
+            lines[row].push(cell.c);
+        }
+    }
+    for line in &mut lines {
+        let trimmed_len = line.trim_end().len();
+        line.truncate(trimmed_len);
+    }
+    lines
 }
 
 impl Terminal for CruxTerminal {

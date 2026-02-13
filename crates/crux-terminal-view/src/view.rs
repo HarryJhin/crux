@@ -113,7 +113,15 @@ impl CruxTerminalView {
 
     pub fn new(cx: &mut Context<Self>) -> Self {
         use crux_config::TerminalConfig;
-        Self::new_with_options(None, None, None, FontConfig::default(), ColorConfig::default(), TerminalConfig::default(), cx)
+        Self::new_with_options(
+            None,
+            None,
+            None,
+            FontConfig::default(),
+            ColorConfig::default(),
+            TerminalConfig::default(),
+            cx,
+        )
     }
 
     /// Create a new terminal view with optional cwd, command, and env.
@@ -620,22 +628,8 @@ impl CruxTerminalView {
     /// Get terminal grid content as text lines.
     pub fn get_text_lines(&self) -> Vec<String> {
         let content = self.terminal.content();
-        let mut lines: Vec<String> = vec![String::new(); content.rows];
-
-        // Single-pass collection: O(cells) instead of O(rows * cells)
-        for cell in &content.cells {
-            let row = cell.point.line.0 as usize;
-            if row < content.rows {
-                lines[row].push(cell.c);
-            }
-        }
-
-        // Trim trailing whitespace in-place (avoid allocating new strings).
-        for line in &mut lines {
-            let trimmed_len = line.trim_end().len();
-            line.truncate(trimmed_len);
-        }
-        lines
+        // Use shared helper from crux-terminal.
+        crux_terminal::extract_text_lines(&content)
     }
 
     /// Get the terminal size.
@@ -999,6 +993,50 @@ impl EntityInputHandler for CruxTerminalView {
         let col = ((f32::from(point.x) - f32::from(self.canvas_origin.x))
             / f32::from(self.cell_width)) as usize;
         Some(col)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf16_offset_to_utf8;
+
+    #[test]
+    fn test_utf16_offset_ascii() {
+        // ASCII: 1 UTF-16 unit = 1 UTF-8 byte
+        assert_eq!(utf16_offset_to_utf8("hello", 0), 0);
+        assert_eq!(utf16_offset_to_utf8("hello", 3), 3);
+        assert_eq!(utf16_offset_to_utf8("hello", 5), 5);
+    }
+
+    #[test]
+    fn test_utf16_offset_korean() {
+        // Korean: 1 UTF-16 unit = 3 UTF-8 bytes
+        let s = "안녕"; // 2 chars, 6 UTF-8 bytes, 2 UTF-16 units
+        assert_eq!(utf16_offset_to_utf8(s, 0), 0);
+        assert_eq!(utf16_offset_to_utf8(s, 1), 3);
+        assert_eq!(utf16_offset_to_utf8(s, 2), 6);
+    }
+
+    #[test]
+    fn test_utf16_offset_emoji() {
+        // Emoji (surrogate pair): 2 UTF-16 units = 4 UTF-8 bytes
+        let s = "😀"; // 1 char, 4 UTF-8 bytes, 2 UTF-16 units
+        assert_eq!(utf16_offset_to_utf8(s, 0), 0);
+        assert_eq!(utf16_offset_to_utf8(s, 2), 4);
+    }
+
+    #[test]
+    fn test_utf16_offset_empty() {
+        assert_eq!(utf16_offset_to_utf8("", 0), 0);
+    }
+
+    #[test]
+    fn test_utf16_offset_mixed() {
+        let s = "a안b"; // 'a'=1+1, '안'=3+1, 'b'=1+1 → 5 UTF-8 bytes, 3 UTF-16 units
+        assert_eq!(utf16_offset_to_utf8(s, 0), 0);
+        assert_eq!(utf16_offset_to_utf8(s, 1), 1); // after 'a'
+        assert_eq!(utf16_offset_to_utf8(s, 2), 4); // after '안'
+        assert_eq!(utf16_offset_to_utf8(s, 3), 5); // after 'b'
     }
 }
 

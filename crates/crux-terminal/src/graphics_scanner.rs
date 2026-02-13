@@ -23,6 +23,7 @@
 use std::sync::mpsc;
 
 use crate::event::{GraphicsProtocol, TerminalEvent};
+use crate::osc_scanner::find_string_terminator;
 
 /// Stateful scanner for Kitty graphics APC sequences.
 ///
@@ -159,10 +160,7 @@ impl KittyGraphicsScanner {
             return;
         }
         let payload = std::mem::take(&mut self.accumulator);
-        log::debug!(
-            "Kitty graphics APC: {} bytes payload",
-            payload.len()
-        );
+        log::debug!("Kitty graphics APC: {} bytes payload", payload.len());
         let _ = event_tx.send(TerminalEvent::Graphics {
             protocol: GraphicsProtocol::Kitty,
             payload,
@@ -263,21 +261,8 @@ pub fn scan_iterm2_graphics(buf: &[u8], event_tx: &mpsc::Sender<TerminalEvent>) 
 
         // Find the string terminator: BEL (0x07) or ESC \ (0x1b 0x5c)
         let payload_start = prefix_end;
-        let mut end = payload_start;
-        let mut found = false;
-        while end < buf.len() {
-            if buf[end] == 0x07 {
-                found = true;
-                break;
-            }
-            if buf[end] == 0x1b && end + 1 < buf.len() && buf[end + 1] == 0x5c {
-                found = true;
-                break;
-            }
-            end += 1;
-        }
 
-        if found {
+        if let Some((end, next_i)) = find_string_terminator(buf, payload_start) {
             let payload = buf[payload_start..end].to_vec();
             if !payload.is_empty() {
                 log::debug!("iTerm2 OSC 1337: {} bytes payload", payload.len());
@@ -287,7 +272,7 @@ pub fn scan_iterm2_graphics(buf: &[u8], event_tx: &mpsc::Sender<TerminalEvent>) 
                 });
             }
             // Skip past the terminator
-            i = if buf[end] == 0x07 { end + 1 } else { end + 2 };
+            i = next_i;
         } else {
             // Incomplete sequence — skip the OSC introducer
             i += 2;
@@ -516,7 +501,10 @@ mod tests {
 
         // ESC _ G ESC \ (empty payload after 'G')
         scanner.feed(b"\x1b_G\x1b\\", &tx);
-        assert!(rx.try_recv().is_err(), "empty payload should not emit event");
+        assert!(
+            rx.try_recv().is_err(),
+            "empty payload should not emit event"
+        );
     }
 
     #[test]
@@ -668,8 +656,7 @@ mod tests {
         let event1 = rx.try_recv().unwrap();
         match &event1 {
             TerminalEvent::Graphics { payload, .. } => {
-                let cmd =
-                    crux_graphics::protocol::kitty::parse_kitty_command(payload).unwrap();
+                let cmd = crux_graphics::protocol::kitty::parse_kitty_command(payload).unwrap();
                 assert!(cmd.more_data, "first chunk should have more_data=true");
             }
             _ => panic!("expected Graphics event"),
@@ -680,8 +667,7 @@ mod tests {
         let event2 = rx.try_recv().unwrap();
         match &event2 {
             TerminalEvent::Graphics { payload, .. } => {
-                let cmd =
-                    crux_graphics::protocol::kitty::parse_kitty_command(payload).unwrap();
+                let cmd = crux_graphics::protocol::kitty::parse_kitty_command(payload).unwrap();
                 assert!(!cmd.more_data, "last chunk should have more_data=false");
             }
             _ => panic!("expected Graphics event"),

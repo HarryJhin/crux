@@ -14,6 +14,9 @@ use crux_protocol::{PaneEvent, PaneId};
 use crate::actions::*;
 use crate::dock::terminal_panel::CruxTerminalPanel;
 
+/// Maximum recursion depth for DockItem tree traversal.
+pub(crate) const MAX_DOCK_DEPTH: usize = 100;
+
 /// Top-level application view managing the DockArea with terminal panels.
 pub struct CruxApp {
     pub(crate) dock_area: Entity<DockArea>,
@@ -69,20 +72,20 @@ impl CruxApp {
         let mut pane_registry = HashMap::new();
         let pane_id = PaneId(0);
         let weak_dock = dock_area.downgrade();
-        let initial_tab =
-            cx.new(|cx| {
-                CruxTerminalPanel::new(
-                    pane_id,
-                    None,
-                    None,
-                    None,
-                    config.font.clone(),
-                    config.colors.clone(),
-                    config.terminal.clone(),
-                    window,
-                    cx,
-                )
-            });
+
+        // Temporary self for helper method access during construction
+        let temp_self = Self {
+            dock_area: dock_area.clone(),
+            _socket_path: None,
+            ipc_cancel: None,
+            pane_registry: HashMap::new(),
+            next_pane_id: AtomicU64::new(1),
+            pane_events: VecDeque::new(),
+            pane_parents: HashMap::new(),
+            mcp_process: None,
+            config: config.clone(),
+        };
+        let initial_tab = temp_self.create_terminal_panel(pane_id, None, None, None, window, cx);
         pane_registry.insert(pane_id, initial_tab.clone());
 
         let dock_item = DockItem::tab(initial_tab, &weak_dock, window, cx);
@@ -176,6 +179,34 @@ impl CruxApp {
         &self.config
     }
 
+    /// Create a new terminal panel with the given parameters.
+    ///
+    /// This helper consolidates the repeated pattern of creating terminal panels
+    /// with config parameters across multiple action handlers and IPC commands.
+    pub(crate) fn create_terminal_panel(
+        &self,
+        pane_id: PaneId,
+        cwd: Option<&str>,
+        command: Option<&[String]>,
+        env: Option<&HashMap<String, String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<CruxTerminalPanel> {
+        cx.new(|cx| {
+            CruxTerminalPanel::new(
+                pane_id,
+                cwd,
+                command,
+                env,
+                self.config.font.clone(),
+                self.config.colors.clone(),
+                self.config.terminal.clone(),
+                window,
+                cx,
+            )
+        })
+    }
+
     /// Collect all TabPanel entities from the DockItem tree in depth-first order.
     pub(crate) fn collect_tab_panels(item: &DockItem) -> Vec<Entity<TabPanel>> {
         let mut result = Vec::new();
@@ -184,7 +215,6 @@ impl CruxApp {
     }
 
     fn collect_tab_panels_recursive(item: &DockItem, out: &mut Vec<Entity<TabPanel>>, depth: usize) {
-        const MAX_DOCK_DEPTH: usize = 100;
         if depth > MAX_DOCK_DEPTH {
             log::warn!("collect_tab_panels_recursive: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
             return;
@@ -224,38 +254,14 @@ impl CruxApp {
     fn action_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
         let pane_id = self.allocate_pane_id();
         if let Some(tab_panel) = self.focused_tab_panel(window, cx) {
-            let panel = cx.new(|cx| {
-                CruxTerminalPanel::new(
-                    pane_id,
-                    None,
-                    None,
-                    None,
-                    self.config.font.clone(),
-                    self.config.colors.clone(),
-                    self.config.terminal.clone(),
-                    window,
-                    cx,
-                )
-            });
+            let panel = self.create_terminal_panel(pane_id, None, None, None, window, cx);
             self.pane_registry.insert(pane_id, panel.clone());
             let panel_view: Arc<dyn PanelView> = Arc::new(panel);
             tab_panel.update(cx, |tp, cx| {
                 tp.add_panel(panel_view, window, cx);
             });
         } else {
-            let panel = cx.new(|cx| {
-                CruxTerminalPanel::new(
-                    pane_id,
-                    None,
-                    None,
-                    None,
-                    self.config.font.clone(),
-                    self.config.colors.clone(),
-                    self.config.terminal.clone(),
-                    window,
-                    cx,
-                )
-            });
+            let panel = self.create_terminal_panel(pane_id, None, None, None, window, cx);
             self.pane_registry.insert(pane_id, panel.clone());
             let panel_view: Arc<dyn PanelView> = Arc::new(panel);
             self.dock_area.update(cx, |area, cx| {
@@ -390,19 +396,7 @@ impl CruxApp {
 
     fn window_split(&mut self, placement: Placement, window: &mut Window, cx: &mut Context<Self>) {
         let pane_id = self.allocate_pane_id();
-        let panel = cx.new(|cx| {
-                CruxTerminalPanel::new(
-                    pane_id,
-                    None,
-                    None,
-                    None,
-                    self.config.font.clone(),
-                    self.config.colors.clone(),
-                    self.config.terminal.clone(),
-                    window,
-                    cx,
-                )
-            });
+        let panel = self.create_terminal_panel(pane_id, None, None, None, window, cx);
         self.pane_registry.insert(pane_id, panel.clone());
 
         let panel_view: Arc<dyn PanelView> = Arc::new(panel);
@@ -430,19 +424,7 @@ impl CruxApp {
         let parent_pane_id = self.active_pane_id(window, cx);
 
         let pane_id = self.allocate_pane_id();
-        let panel = cx.new(|cx| {
-                CruxTerminalPanel::new(
-                    pane_id,
-                    None,
-                    None,
-                    None,
-                    self.config.font.clone(),
-                    self.config.colors.clone(),
-                    self.config.terminal.clone(),
-                    window,
-                    cx,
-                )
-            });
+        let panel = self.create_terminal_panel(pane_id, None, None, None, window, cx);
         self.pane_registry.insert(pane_id, panel.clone());
         let panel_view: Arc<dyn PanelView> = Arc::new(panel);
 
@@ -666,7 +648,6 @@ impl CruxApp {
     }
 
     fn collect_panes_from_dock_item_recursive(&mut self, item: &DockItem, cx: &App, depth: usize) {
-        const MAX_DOCK_DEPTH: usize = 100;
         if depth > MAX_DOCK_DEPTH {
             log::warn!("collect_panes_from_dock_item: max depth {} exceeded, stopping recursion", MAX_DOCK_DEPTH);
             return;

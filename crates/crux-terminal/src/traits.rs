@@ -225,7 +225,8 @@ pub mod mock {
         {
             // Create a temporary term for testing
             use alacritty_terminal::term::test::TermSize;
-            let term_size = TermSize::new(self.mock_size.cols as usize, self.mock_size.rows as usize);
+            let term_size =
+                TermSize::new(self.mock_size.cols as usize, self.mock_size.rows as usize);
             let term = Term::new(Config::default(), &term_size, {
                 let (tx, _rx) = std::sync::mpsc::channel();
                 CruxEventListener::new(tx)
@@ -239,7 +240,8 @@ pub mod mock {
         {
             // Create a temporary term for testing
             use alacritty_terminal::term::test::TermSize;
-            let term_size = TermSize::new(self.mock_size.cols as usize, self.mock_size.rows as usize);
+            let term_size =
+                TermSize::new(self.mock_size.cols as usize, self.mock_size.rows as usize);
             let mut term = Term::new(Config::default(), &term_size, {
                 let (tx, _rx) = std::sync::mpsc::channel();
                 CruxEventListener::new(tx)

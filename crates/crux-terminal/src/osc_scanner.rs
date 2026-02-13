@@ -9,6 +9,26 @@ use std::sync::mpsc;
 
 use crate::event::{SemanticZoneType, TerminalEvent};
 
+/// Find the next string terminator (BEL or ESC\\) in data starting from `start`.
+/// Returns (content_end_index, bytes_consumed) or None if not found.
+///
+/// String terminators in escape sequences:
+/// - BEL: 0x07 (1 byte)
+/// - ST (String Terminator): ESC \ (0x1b 0x5c, 2 bytes)
+pub(crate) fn find_string_terminator(data: &[u8], start: usize) -> Option<(usize, usize)> {
+    for i in start..data.len() {
+        if data[i] == 0x07 {
+            // BEL
+            return Some((i, i + 1));
+        }
+        if data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == 0x5c {
+            // ESC \
+            return Some((i, i + 2));
+        }
+    }
+    None
+}
+
 /// Extract the directory path from an OSC 7 URI payload.
 ///
 /// OSC 7 format: `file://hostname/path` or `file:///path`.
@@ -67,21 +87,8 @@ pub(crate) fn scan_osc7(buf: &[u8], event_tx: &mpsc::Sender<TerminalEvent>) {
 
         // Find the string terminator: BEL (0x07) or ESC \ (0x1b 0x5c).
         let payload_start = i + 4;
-        let mut end = payload_start;
-        let mut found = false;
-        while end < buf.len() {
-            if buf[end] == 0x07 {
-                found = true;
-                break;
-            }
-            if buf[end] == 0x1b && end + 1 < buf.len() && buf[end + 1] == 0x5c {
-                found = true;
-                break;
-            }
-            end += 1;
-        }
 
-        if found {
+        if let Some((end, next_i)) = find_string_terminator(buf, payload_start) {
             if let Ok(uri) = std::str::from_utf8(&buf[payload_start..end]) {
                 if let Some(path) = parse_osc7_uri(uri) {
                     log::debug!("OSC 7 CWD: {}", path);
@@ -89,7 +96,7 @@ pub(crate) fn scan_osc7(buf: &[u8], event_tx: &mpsc::Sender<TerminalEvent>) {
                 }
             }
             // Skip past the terminator.
-            i = if buf[end] == 0x07 { end + 1 } else { end + 2 };
+            i = next_i;
         } else {
             // Incomplete sequence — skip the ESC ] and continue.
             i += 2;
@@ -138,21 +145,7 @@ pub(crate) fn scan_osc133(buf: &[u8], event_tx: &mpsc::Sender<TerminalEvent>) {
         }
 
         // Find the string terminator: BEL (0x07) or ESC \ (0x1b 0x5c).
-        let mut end = payload_start;
-        let mut found = false;
-        while end < buf.len() {
-            if buf[end] == 0x07 {
-                found = true;
-                break;
-            }
-            if buf[end] == 0x1b && end + 1 < buf.len() && buf[end + 1] == 0x5c {
-                found = true;
-                break;
-            }
-            end += 1;
-        }
-
-        if found {
+        if let Some((end, next_i)) = find_string_terminator(buf, payload_start) {
             if let Ok(payload) = std::str::from_utf8(&buf[payload_start..end]) {
                 let event = match payload.as_bytes().first() {
                     Some(b'A') => Some(TerminalEvent::PromptMark {
@@ -185,7 +178,7 @@ pub(crate) fn scan_osc133(buf: &[u8], event_tx: &mpsc::Sender<TerminalEvent>) {
                 }
             }
             // Skip past the terminator.
-            i = if buf[end] == 0x07 { end + 1 } else { end + 2 };
+            i = next_i;
         } else {
             // Incomplete sequence — skip the ESC ] and continue.
             i += 2;

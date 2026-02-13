@@ -9,7 +9,7 @@ use alacritty_terminal::vte::ansi::{self, Processor};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
 use crate::event::{CruxEventListener, TerminalEvent};
-use crate::osc_scanner::{scan_osc7, scan_osc133};
+use crate::osc_scanner::{scan_osc133, scan_osc7};
 use crate::TerminalSize;
 
 /// Typed error for PTY spawn failures.
@@ -111,8 +111,10 @@ pub fn spawn_pty(
     let pair = pty_system.openpty(PtySize {
         rows: u16::try_from(size.rows).unwrap_or(u16::MAX),
         cols: u16::try_from(size.cols).unwrap_or(u16::MAX),
-        pixel_width: u16::try_from((size.cols as f32 * size.cell_width) as usize).unwrap_or(u16::MAX),
-        pixel_height: u16::try_from((size.rows as f32 * size.cell_height) as usize).unwrap_or(u16::MAX),
+        pixel_width: u16::try_from((size.cols as f32 * size.cell_width) as usize)
+            .unwrap_or(u16::MAX),
+        pixel_height: u16::try_from((size.rows as f32 * size.cell_height) as usize)
+            .unwrap_or(u16::MAX),
     })?;
 
     let mut cmd = if let Some(args) = command {
@@ -395,5 +397,4 @@ mod tests {
             "xterm-crux should be available after ensure_terminfo_installed"
         );
     }
-
 }

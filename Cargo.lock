@@ -1557,6 +1557,7 @@ dependencies = [
  "crux-protocol",
  "libc",
  "log",
+ "proptest",
  "serde",
  "serde_json",
  "tokio",

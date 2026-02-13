@@ -238,7 +238,10 @@ mod tests {
         // CString::new rejects embedded NULs, so this should return false
         // without ever calling into Carbon APIs.
         let result = switch_to_input_source("com.apple\0.test");
-        assert!(!result, "Should return false for input source ID with null byte");
+        assert!(
+            !result,
+            "Should return false for input source ID with null byte"
+        );
     }
 
     #[test]

@@ -142,7 +142,7 @@ mod tests {
         });
 
         let params: ClipboardWriteParams = serde_json::from_value(json).unwrap();
-        assert_eq!(params.content_type, "text");
+        assert_eq!(params.content_type, crux_protocol::ClipboardContentType::Text);
         assert_eq!(params.text, Some("Hello clipboard".to_string()));
     }
 

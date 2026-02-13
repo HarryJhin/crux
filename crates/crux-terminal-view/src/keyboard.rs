@@ -340,9 +340,33 @@ mod tests {
     fn test_is_ime_candidate_control_keys() {
         // Named terminal control keys should not be IME candidates
         let control_keys = [
-            "enter", "tab", "backspace", "escape", "space", "up", "down", "left", "right",
-            "home", "end", "insert", "delete", "pageup", "pagedown", "f1", "f2", "f3", "f4",
-            "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+            "enter",
+            "tab",
+            "backspace",
+            "escape",
+            "space",
+            "up",
+            "down",
+            "left",
+            "right",
+            "home",
+            "end",
+            "insert",
+            "delete",
+            "pageup",
+            "pagedown",
+            "f1",
+            "f2",
+            "f3",
+            "f4",
+            "f5",
+            "f6",
+            "f7",
+            "f8",
+            "f9",
+            "f10",
+            "f11",
+            "f12",
         ];
 
         for key in control_keys {
@@ -360,5 +384,4 @@ mod tests {
             );
         }
     }
-
 }

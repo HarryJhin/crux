@@ -67,26 +67,60 @@ pub fn kitty_encode_key(
 
     match keystroke.key.as_str() {
         // Esc always encodes to CSI 27 u (with or without modifiers).
-        "escape" => Some(encode_csi_u(27, None, None, mods, event_type, report_event_types)),
+        "escape" => Some(encode_csi_u(
+            27,
+            None,
+            None,
+            mods,
+            event_type,
+            report_event_types,
+        )),
 
         // Tab becomes CSI 9 u (vs Ctrl+I → CSI 105;5u).
-        "tab" => Some(encode_csi_u(9, None, None, mods, event_type, report_event_types)),
+        "tab" => Some(encode_csi_u(
+            9,
+            None,
+            None,
+            mods,
+            event_type,
+            report_event_types,
+        )),
 
         // Enter becomes CSI 13 u (vs Ctrl+M → CSI 109;5u).
-        "enter" => Some(encode_csi_u(13, None, None, mods, event_type, report_event_types)),
+        "enter" => Some(encode_csi_u(
+            13,
+            None,
+            None,
+            mods,
+            event_type,
+            report_event_types,
+        )),
 
         // Backspace → CSI 127 u.
-        "backspace" => Some(encode_csi_u(127, None, None, mods, event_type, report_event_types)),
+        "backspace" => Some(encode_csi_u(
+            127,
+            None,
+            None,
+            mods,
+            event_type,
+            report_event_types,
+        )),
 
         // Space → CSI 32 u (distinguishes Ctrl+Space from space).
-        "space" => Some(encode_csi_u(32, None, None, mods, event_type, report_event_types)),
+        "space" => Some(encode_csi_u(
+            32,
+            None,
+            None,
+            mods,
+            event_type,
+            report_event_types,
+        )),
 
         // Arrow keys, F1-F4 keep legacy encoding when no modifiers.
         // This is per the Kitty spec: applications rely on these legacy sequences.
-        "up" | "down" | "left" | "right" | "home" | "end"
-        | "insert" | "delete" | "pageup" | "pagedown"
-        | "f1" | "f2" | "f3" | "f4" | "f5" | "f6"
-        | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => {
+        "up" | "down" | "left" | "right" | "home" | "end" | "insert" | "delete" | "pageup"
+        | "pagedown" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9" | "f10"
+        | "f11" | "f12" => {
             // Only encode if there are modifiers. Otherwise, let legacy path handle it.
             if mods > 0 {
                 // Map named keys to Unicode codepoints per Kitty protocol spec.
@@ -115,7 +149,14 @@ pub fn kitty_encode_key(
                     "f12" => 57387,
                     _ => return None,
                 };
-                Some(encode_csi_u(codepoint, None, None, mods, event_type, report_event_types))
+                Some(encode_csi_u(
+                    codepoint,
+                    None,
+                    None,
+                    mods,
+                    event_type,
+                    report_event_types,
+                ))
             } else {
                 None // Let legacy encoder handle unmodified special keys.
             }
@@ -134,28 +175,47 @@ pub fn kitty_encode_key(
                     };
 
                     // Flag 4: Report shifted key if applicable.
-                    let shifted_key = if report_alternate_keys && ch.is_ascii_alphabetic() && keystroke.modifiers.shift {
+                    let shifted_key = if report_alternate_keys
+                        && ch.is_ascii_alphabetic()
+                        && keystroke.modifiers.shift
+                    {
                         Some(ch.to_ascii_uppercase() as u32)
                     } else {
                         None
                     };
 
-                    return Some(encode_csi_u(base_codepoint, shifted_key, None, mods, event_type, report_event_types));
+                    return Some(encode_csi_u(
+                        base_codepoint,
+                        shifted_key,
+                        None,
+                        mods,
+                        event_type,
+                        report_event_types,
+                    ));
                 }
             }
 
             // Alt+key combinations: encode with Alt modifier.
-            let has_alt = keystroke.modifiers.alt
-                && !matches!(option_as_alt, OptionAsAlt::None);
+            let has_alt = keystroke.modifiers.alt && !matches!(option_as_alt, OptionAsAlt::None);
             if has_alt {
                 if let Some(ch) = key.chars().next() {
                     let base_codepoint = ch as u32;
-                    let shifted_key = if report_alternate_keys && ch.is_ascii_alphabetic() && keystroke.modifiers.shift {
+                    let shifted_key = if report_alternate_keys
+                        && ch.is_ascii_alphabetic()
+                        && keystroke.modifiers.shift
+                    {
                         Some(ch.to_ascii_uppercase() as u32)
                     } else {
                         None
                     };
-                    return Some(encode_csi_u(base_codepoint, shifted_key, None, mods, event_type, report_event_types));
+                    return Some(encode_csi_u(
+                        base_codepoint,
+                        shifted_key,
+                        None,
+                        mods,
+                        event_type,
+                        report_event_types,
+                    ));
                 }
             }
 
@@ -163,18 +223,32 @@ pub fn kitty_encode_key(
             if keystroke.modifiers.platform {
                 if let Some(ch) = key.chars().next() {
                     let base_codepoint = ch as u32;
-                    let shifted_key = if report_alternate_keys && ch.is_ascii_alphabetic() && keystroke.modifiers.shift {
+                    let shifted_key = if report_alternate_keys
+                        && ch.is_ascii_alphabetic()
+                        && keystroke.modifiers.shift
+                    {
                         Some(ch.to_ascii_uppercase() as u32)
                     } else {
                         None
                     };
-                    return Some(encode_csi_u(base_codepoint, shifted_key, None, mods, event_type, report_event_types));
+                    return Some(encode_csi_u(
+                        base_codepoint,
+                        shifted_key,
+                        None,
+                        mods,
+                        event_type,
+                        report_event_types,
+                    ));
                 }
             }
 
             // Shift+key for non-letters (e.g., Shift+1 → !) should still be raw UTF-8.
             // Only encode if there's a non-shift modifier.
-            if keystroke.modifiers.shift && !keystroke.modifiers.control && !has_alt && !keystroke.modifiers.platform {
+            if keystroke.modifiers.shift
+                && !keystroke.modifiers.control
+                && !has_alt
+                && !keystroke.modifiers.platform
+            {
                 return None; // Let raw UTF-8 path handle Shift+key.
             }
 
@@ -301,7 +375,12 @@ mod tests {
     fn test_escape_plain() {
         let ks = make_keystroke("escape", Modifiers::default());
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[27u".to_vec())
         );
     }
@@ -317,7 +396,12 @@ mod tests {
         );
         // modifier = 1 + 1 (shift) = 2
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[27;2u".to_vec())
         );
     }
@@ -326,7 +410,12 @@ mod tests {
     fn test_tab_plain() {
         let ks = make_keystroke("tab", Modifiers::default());
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[9u".to_vec())
         );
     }
@@ -343,7 +432,12 @@ mod tests {
         );
         // modifier = 1 + 4 (ctrl) = 5
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[105;5u".to_vec())
         );
     }
@@ -352,7 +446,12 @@ mod tests {
     fn test_enter_plain() {
         let ks = make_keystroke("enter", Modifiers::default());
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[13u".to_vec())
         );
     }
@@ -369,7 +468,12 @@ mod tests {
         );
         // modifier = 1 + 4 (ctrl) = 5
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[109;5u".to_vec())
         );
     }
@@ -385,7 +489,12 @@ mod tests {
         );
         // modifier = 1 + 4 (ctrl) = 5
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[97;5u".to_vec()) // 'a' = 97
         );
     }
@@ -401,7 +510,12 @@ mod tests {
         );
         // modifier = 1 + 2 (alt) = 3
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[97;3u".to_vec())
         );
     }
@@ -418,7 +532,12 @@ mod tests {
         );
         // modifier = 1 + 2 (alt) + 4 (ctrl) = 7
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[97;7u".to_vec())
         );
     }
@@ -428,7 +547,12 @@ mod tests {
         // Arrow keys without modifiers should return None (legacy path handles them).
         let ks = make_keystroke("up", Modifiers::default());
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             None
         );
     }
@@ -446,7 +570,12 @@ mod tests {
         // modifier = 1 + 4 (ctrl) = 5
         // up arrow = 57362
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[57362;5u".to_vec())
         );
     }
@@ -456,7 +585,12 @@ mod tests {
         // Plain 'a' without modifiers should return None (raw UTF-8 path handles it).
         let ks = make_keystroke("a", Modifiers::default());
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             None
         );
     }
@@ -476,7 +610,12 @@ mod tests {
     fn test_backspace() {
         let ks = make_keystroke("backspace", Modifiers::default());
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[127u".to_vec())
         );
     }
@@ -485,7 +624,12 @@ mod tests {
     fn test_space() {
         let ks = make_keystroke("space", Modifiers::default());
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[32u".to_vec())
         );
     }
@@ -501,7 +645,12 @@ mod tests {
         );
         // modifier = 1 + 4 (ctrl) = 5
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[32;5u".to_vec())
         );
     }
@@ -511,7 +660,12 @@ mod tests {
         // F1 without modifiers → None (legacy path).
         let ks = make_keystroke("f1", Modifiers::default());
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             None
         );
     }
@@ -529,7 +683,12 @@ mod tests {
         // modifier = 1 + 1 (shift) = 2
         // F1 = 57376
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[57376;2u".to_vec())
         );
     }
@@ -546,7 +705,12 @@ mod tests {
         );
         // modifier = 1 + 0 (alt ignored) = 0 → no encoding (returns None).
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::None, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::None,
+                KeyEventType::Press
+            ),
             None
         );
     }
@@ -592,7 +756,12 @@ mod tests {
         );
         // With Flag 2: CSI 97;5:1 u (event type 1 = press)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag2(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag2(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[97;5:1u".to_vec())
         );
     }
@@ -608,7 +777,12 @@ mod tests {
         );
         // With Flag 2: CSI 97;5:2 u (event type 2 = repeat)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag2(), OptionAsAlt::Both, KeyEventType::Repeat),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag2(),
+                OptionAsAlt::Both,
+                KeyEventType::Repeat
+            ),
             Some(b"\x1b[97;5:2u".to_vec())
         );
     }
@@ -624,7 +798,12 @@ mod tests {
         );
         // With Flag 2: CSI 97;5:3 u (event type 3 = release)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag2(), OptionAsAlt::Both, KeyEventType::Release),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag2(),
+                OptionAsAlt::Both,
+                KeyEventType::Release
+            ),
             Some(b"\x1b[97;5:3u".to_vec())
         );
     }
@@ -634,7 +813,12 @@ mod tests {
         let ks = make_keystroke("escape", Modifiers::default());
         // No modifiers but release event: CSI 27;:3 u
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag2(), OptionAsAlt::Both, KeyEventType::Release),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag2(),
+                OptionAsAlt::Both,
+                KeyEventType::Release
+            ),
             Some(b"\x1b[27;:3u".to_vec())
         );
     }
@@ -644,7 +828,12 @@ mod tests {
         let ks = make_keystroke("escape", Modifiers::default());
         // No modifiers and press event (default): CSI 27 u (event type omitted)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag2(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag2(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[27u".to_vec())
         );
     }
@@ -664,7 +853,12 @@ mod tests {
         // Flag 4: Report shifted key (A = 65)
         // CSI 97:65;6 u (modifier = 1 + 1 (shift) + 4 (ctrl) = 6)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag4(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag4(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[97:65;6u".to_vec())
         );
     }
@@ -681,7 +875,12 @@ mod tests {
         );
         // Flag 4: CSI 97:65;4 u (modifier = 1 + 1 (shift) + 2 (alt) = 4)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag4(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag4(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[97:65;4u".to_vec())
         );
     }
@@ -697,7 +896,12 @@ mod tests {
         );
         // No shift, so no alternate key: CSI 97;5 u
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag4(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag4(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[97;5u".to_vec())
         );
     }
@@ -716,7 +920,12 @@ mod tests {
         );
         // All flags: CSI 97:65;6:1 u
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flags_1_2_4(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flags_1_2_4(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[97:65;6:1u".to_vec())
         );
     }
@@ -733,7 +942,12 @@ mod tests {
         );
         // All flags: CSI 97:65;6:3 u (release)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flags_1_2_4(), OptionAsAlt::Both, KeyEventType::Release),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flags_1_2_4(),
+                OptionAsAlt::Both,
+                KeyEventType::Release
+            ),
             Some(b"\x1b[97:65;6:3u".to_vec())
         );
     }
@@ -750,7 +964,12 @@ mod tests {
         );
         // All flags: CSI 97:65;4:2 u (repeat, modifier = 1+1+2 = 4)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flags_1_2_4(), OptionAsAlt::Both, KeyEventType::Repeat),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flags_1_2_4(),
+                OptionAsAlt::Both,
+                KeyEventType::Repeat
+            ),
             Some(b"\x1b[97:65;4:2u".to_vec())
         );
     }
@@ -766,7 +985,12 @@ mod tests {
         );
         // Flag 1 only: CSI 97;5 u (no event type suffix)
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag1(), OptionAsAlt::Both, KeyEventType::Repeat),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag1(),
+                OptionAsAlt::Both,
+                KeyEventType::Repeat
+            ),
             Some(b"\x1b[97;5u".to_vec())
         );
     }
@@ -782,7 +1006,12 @@ mod tests {
         );
         // Flag 2 with arrow key: CSI 57362;5:1 u
         assert_eq!(
-            kitty_encode_key(&ks, &flags_with_flag2(), OptionAsAlt::Both, KeyEventType::Press),
+            kitty_encode_key(
+                &ks,
+                &flags_with_flag2(),
+                OptionAsAlt::Both,
+                KeyEventType::Press
+            ),
             Some(b"\x1b[57362;5:1u".to_vec())
         );
     }

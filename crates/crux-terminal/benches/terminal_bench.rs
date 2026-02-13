@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 use crux_terminal::event::TerminalEvent;
-use crux_terminal::osc_scanner::{parse_osc7_uri, scan_osc7, scan_osc133};
+use crux_terminal::osc_scanner::{parse_osc7_uri, scan_osc133, scan_osc7};
 
 /// Build a realistic 4 KB PTY output buffer containing one OSC 7 sequence
 /// embedded in normal terminal output.
