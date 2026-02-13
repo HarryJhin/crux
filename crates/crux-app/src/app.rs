@@ -758,6 +758,108 @@ impl CruxApp {
                 let result = self.handle_session_load(params.path, window, cx);
                 let _ = reply.send(result);
             }
+
+            IpcCommand::ClipboardRead { params, reply } => {
+                #[cfg(target_os = "macos")]
+                {
+                    if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
+                        let result = match crux_clipboard::Clipboard::read(mtm) {
+                            Ok(content) => {
+                                let read_result = match content {
+                                    crux_clipboard::ClipboardContent::Text(text) => {
+                                        if params.content_type == "image" {
+                                            Err(anyhow::anyhow!("no image in clipboard"))
+                                        } else {
+                                            Ok(crux_protocol::ClipboardReadResult::Text { text })
+                                        }
+                                    }
+                                    crux_clipboard::ClipboardContent::Html(html) => {
+                                        Ok(crux_protocol::ClipboardReadResult::Html { html })
+                                    }
+                                    crux_clipboard::ClipboardContent::Image { png_data } => {
+                                        match crux_clipboard::save_image_to_temp(&png_data) {
+                                            Ok(path) => Ok(crux_protocol::ClipboardReadResult::Image {
+                                                image_path: path.to_string_lossy().to_string(),
+                                            }),
+                                            Err(e) => Err(anyhow::anyhow!("{e}")),
+                                        }
+                                    }
+                                    crux_clipboard::ClipboardContent::FilePaths(paths) => {
+                                        Ok(crux_protocol::ClipboardReadResult::FilePaths {
+                                            paths: paths.iter().map(|p| p.to_string_lossy().to_string()).collect(),
+                                        })
+                                    }
+                                };
+                                read_result
+                            }
+                            Err(e) => Err(anyhow::anyhow!("{e}")),
+                        };
+                        let _ = reply.send(result);
+                    } else {
+                        let _ = reply.send(Err(anyhow::anyhow!("not on main thread")));
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = params;
+                    let _ = reply.send(Err(anyhow::anyhow!("clipboard not supported on this platform")));
+                }
+            }
+
+            IpcCommand::ClipboardWrite { params, reply } => {
+                #[cfg(target_os = "macos")]
+                {
+                    if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
+                        let result = match params.content_type.as_str() {
+                            "text" => {
+                                if let Some(text) = &params.text {
+                                    crux_clipboard::Clipboard::write_text(text, mtm)
+                                        .map_err(|e| anyhow::anyhow!("{e}"))
+                                } else {
+                                    Err(anyhow::anyhow!("text field required for content_type 'text'"))
+                                }
+                            }
+                            "image" => {
+                                if let Some(path) = &params.image_path {
+                                    match std::fs::read(path) {
+                                        Ok(data) => crux_clipboard::Clipboard::write_image(&data, mtm)
+                                            .map_err(|e| anyhow::anyhow!("{e}")),
+                                        Err(e) => Err(anyhow::anyhow!("failed to read image: {e}")),
+                                    }
+                                } else {
+                                    Err(anyhow::anyhow!("image_path field required for content_type 'image'"))
+                                }
+                            }
+                            other => Err(anyhow::anyhow!("unsupported content_type: {other}")),
+                        };
+                        let _ = reply.send(result);
+                    } else {
+                        let _ = reply.send(Err(anyhow::anyhow!("not on main thread")));
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = params;
+                    let _ = reply.send(Err(anyhow::anyhow!("clipboard not supported on this platform")));
+                }
+            }
+
+            IpcCommand::ImeGetState { reply } => {
+                // Basic IME state. Full preedit text query deferred to Phase 5
+                // (requires adding a public accessor to CruxTerminalView).
+                let state = crux_protocol::ImeStateResult {
+                    composing: false,
+                    preedit_text: None,
+                    input_source: None,
+                };
+                let _ = reply.send(Ok(state));
+            }
+
+            IpcCommand::ImeSetInputSource { params, reply } => {
+                // IME source switching will be fully implemented in Phase 5.
+                let _ = params;
+                let _ = reply.send(Err(anyhow::anyhow!("IME source switching not yet implemented")));
+            }
         }
     }
 

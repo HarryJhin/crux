@@ -419,6 +419,11 @@ pub mod method {
     pub const WINDOW_LIST: &str = "crux:window/list";
     pub const SESSION_SAVE: &str = "crux:session/save";
     pub const SESSION_LOAD: &str = "crux:session/load";
+    pub const CLIPBOARD_READ: &str = "crux:clipboard/read";
+    pub const CLIPBOARD_WRITE: &str = "crux:clipboard/write";
+    pub const IME_GET_STATE: &str = "crux:ime/get-state";
+    pub const IME_SET_INPUT_SOURCE: &str = "crux:ime/set-input-source";
+    pub const EVENTS_SUBSCRIBE: &str = "crux:events/subscribe";
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +502,97 @@ pub fn decode_frame(buf: &[u8]) -> Result<Option<(usize, Vec<u8>)>, FrameError> 
         return Ok(None);
     }
     Ok(Some((4 + len, buf[4..4 + len].to_vec())))
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Clipboard, IME, and Event types
+// ---------------------------------------------------------------------------
+
+/// Parameters for `crux:clipboard/read`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipboardReadParams {
+    /// Preferred content type: "text", "image", "auto" (default: "auto").
+    #[serde(default = "default_clipboard_type")]
+    pub content_type: String,
+}
+
+fn default_clipboard_type() -> String {
+    "auto".to_string()
+}
+
+/// Result of `crux:clipboard/read` — tagged union for type-safe responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "content_type")]
+pub enum ClipboardReadResult {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image { image_path: String },
+    #[serde(rename = "html")]
+    Html { html: String },
+    #[serde(rename = "file_paths")]
+    FilePaths { paths: Vec<String> },
+}
+
+/// Parameters for `crux:clipboard/write`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipboardWriteParams {
+    /// Content type: "text" or "image".
+    pub content_type: String,
+    /// Text content (when content_type is "text").
+    pub text: Option<String>,
+    /// Path to PNG file (when content_type is "image").
+    pub image_path: Option<String>,
+}
+
+/// Result of `crux:ime/get-state`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImeStateResult {
+    /// Whether IME is currently composing (has preedit text).
+    pub composing: bool,
+    /// Current preedit text, if any.
+    pub preedit_text: Option<String>,
+    /// Current input source identifier (e.g. "com.apple.inputmethod.Korean.2SetKorean").
+    pub input_source: Option<String>,
+}
+
+/// Parameters for `crux:ime/set-input-source`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImeSetInputSourceParams {
+    /// Input source identifier (e.g. "com.apple.keylayout.ABC").
+    pub input_source: String,
+}
+
+/// Parameters for `crux:events/subscribe`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventsSubscribeParams {
+    /// Event types to subscribe to.
+    pub events: Vec<PaneEventType>,
+}
+
+/// Event types available for subscription.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneEventType {
+    PaneCreated,
+    PaneClosed,
+    PaneFocused,
+    PaneResized,
+    TitleChanged,
+    ClipboardSet,
+}
+
+/// OSC 52 clipboard access policy.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Osc52Policy {
+    /// Default: programs can write to clipboard, not read.
+    #[default]
+    WriteOnly,
+    /// User opted in: programs can read and write clipboard.
+    ReadWrite,
+    /// No clipboard access via OSC 52.
+    Disabled,
 }
 
 // ---------------------------------------------------------------------------
@@ -635,5 +731,42 @@ mod tests {
         let json = serde_json::to_string(&cells).unwrap();
         let parsed: SplitSize = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, cells);
+    }
+
+    #[test]
+    fn clipboard_read_result_tagged_union_serde() {
+        let text = ClipboardReadResult::Text { text: "hello".into() };
+        let json = serde_json::to_string(&text).unwrap();
+        assert!(json.contains(r#""content_type":"text""#));
+        assert!(json.contains(r#""text":"hello""#));
+
+        let image = ClipboardReadResult::Image { image_path: "/tmp/img.png".into() };
+        let json = serde_json::to_string(&image).unwrap();
+        assert!(json.contains(r#""content_type":"image""#));
+
+        let files = ClipboardReadResult::FilePaths { paths: vec!["a.txt".into()] };
+        let json = serde_json::to_string(&files).unwrap();
+        assert!(json.contains(r#""content_type":"file_paths""#));
+    }
+
+    #[test]
+    fn clipboard_read_params_default() {
+        let params: ClipboardReadParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(params.content_type, "auto");
+    }
+
+    #[test]
+    fn pane_event_type_serde() {
+        let evt = PaneEventType::TitleChanged;
+        let json = serde_json::to_string(&evt).unwrap();
+        assert_eq!(json, r#""title_changed""#);
+        let parsed: PaneEventType = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, PaneEventType::TitleChanged));
+    }
+
+    #[test]
+    fn osc52_policy_default() {
+        let policy = Osc52Policy::default();
+        assert!(matches!(policy, Osc52Policy::WriteOnly));
     }
 }

@@ -6,11 +6,12 @@
 use tokio::sync::oneshot;
 
 use crux_protocol::{
-    ActivatePaneParams, ClosePaneParams, GetSelectionParams, GetSelectionResult, GetSnapshotParams,
-    GetSnapshotResult, GetTextParams, GetTextResult, HandshakeParams, HandshakeResult,
-    ListPanesResult, ResizePaneParams, SendTextParams, SendTextResult, SessionLoadParams,
-    SessionLoadResult, SessionSaveParams, SessionSaveResult, SplitPaneParams, SplitPaneResult,
-    WindowCreateParams, WindowCreateResult, WindowListResult,
+    ActivatePaneParams, ClipboardReadParams, ClipboardReadResult, ClipboardWriteParams,
+    ClosePaneParams, GetSelectionParams, GetSelectionResult, GetSnapshotParams, GetSnapshotResult,
+    GetTextParams, GetTextResult, HandshakeParams, HandshakeResult, ImeSetInputSourceParams,
+    ImeStateResult, ListPanesResult, ResizePaneParams, SendTextParams, SendTextResult,
+    SessionLoadParams, SessionLoadResult, SessionSaveParams, SessionSaveResult, SplitPaneParams,
+    SplitPaneResult, WindowCreateParams, WindowCreateResult, WindowListResult,
 };
 
 /// Commands sent from the IPC server to the GPUI main thread.
@@ -68,5 +69,20 @@ pub enum IpcCommand {
     SessionLoad {
         params: SessionLoadParams,
         reply: oneshot::Sender<anyhow::Result<SessionLoadResult>>,
+    },
+    ClipboardRead {
+        params: ClipboardReadParams,
+        reply: oneshot::Sender<anyhow::Result<ClipboardReadResult>>,
+    },
+    ClipboardWrite {
+        params: ClipboardWriteParams,
+        reply: oneshot::Sender<anyhow::Result<()>>,
+    },
+    ImeGetState {
+        reply: oneshot::Sender<anyhow::Result<ImeStateResult>>,
+    },
+    ImeSetInputSource {
+        params: ImeSetInputSourceParams,
+        reply: oneshot::Sender<anyhow::Result<()>>,
     },
 }

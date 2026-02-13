@@ -1430,6 +1430,7 @@ dependencies = [
  "gpui-component-assets",
  "libc",
  "log",
+ "objc2-foundation 0.2.2",
  "serde_json",
  "tokio",
 ]
