@@ -1,7 +1,7 @@
 # Crux Implementation Plan
 
 > Detailed phased implementation plan for the Crux terminal emulator
-> Created: 2026-02-11 | Updated: 2026-02-12
+> Created: 2026-02-11 | Updated: 2026-02-13
 > End Goal: Homebrew distribution + Claude Code Feature Request + Native MCP Server integration
 
 ---
@@ -24,11 +24,14 @@
 
 - [x] Initialize Cargo workspace with `crates/` structure
   - Workspace root: `resolver = "2"`, `members` array for all crates
-  - Crate dependency graph: `crux-protocol` (leaf) -> `crux-terminal` -> `crux-terminal-view` -> `crux-app` (root)
-  - `crux-ipc`, `crux-clipboard` as initially empty crates for Phase 2/3
+  - Crate dependency graph (leaf → root):
+    - Foundation (no internal deps): `crux-protocol`, `crux-terminal`, `crux-graphics`, `crux-clipboard`, `crux-config`
+    - Integration: `crux-ipc` (→ crux-protocol), `crux-terminal-view` (→ crux-terminal, crux-clipboard, crux-config)
+    - Application: `crux-app` (→ crux-terminal-view, crux-clipboard, crux-protocol, crux-ipc, crux-config), `crux-mcp` (→ crux-protocol, crux-ipc)
+  - **Note**: `gpui` and `gpui-component` are patched locally via `patches/` directory (drag-and-drop image data, DockArea resize API)
 - [x] Set up `crux-app` crate with GPUI application bootstrap
   - `Application::new().run()` -> `cx.open_window()` -> Root view
-  - Window default size: 800x600
+  - Window size: configurable via `crux-config` (default 800x600)
   - `FocusHandle` for keyboard event capture
 - [x] Set up `crux-terminal` crate for terminal entity
 - [x] Set up `crux-terminal-view` crate for rendering
@@ -268,6 +271,7 @@ libc = "0.2"
 - [x] `crux:pane/list` -- list all panes with metadata (JSON)
 - [x] `crux:pane/activate` -- focus a pane
 - [x] `crux:pane/close` -- close pane (graceful or forced)
+- [x] `crux:pane/resize` -- resize pane dimensions via IPC (width/height params)
 - [x] `crux:window/create` -- new window
   - Single-window mode: returns existing WindowId(0); CLI: crux cli window-create
 - [x] `crux:window/list` -- list windows
@@ -311,7 +315,7 @@ Native MCP (Model Context Protocol) server embedded in Crux, enabling all MCP-co
   - [x] `crux_close_pane` — close by pane_id
   - [x] `crux_focus_pane` — switch focus
   - [x] `crux_list_panes` — all panes with metadata (id, pid, cwd, size)
-  - [x] `crux_resize_pane` — stub (requires GPUI resize API)
+  - [x] `crux_resize_pane` — resize via DockArea/StackPanel API
 - [x] Command execution tools (5):
   - [x] `crux_execute_command` — run command, return exit_code + stdout
   - [x] `crux_send_keys` — raw key sequences (Ctrl+C, Enter, arrows)
@@ -322,14 +326,15 @@ Native MCP (Model Context Protocol) server embedded in Crux, enabling all MCP-co
   - [x] `crux_get_current_directory` — shell CWD (via OSC 7)
   - [x] `crux_get_running_process` — foreground process name + pid
   - [x] `crux_get_pane_state` — full snapshot (cols, rows, cursor, scroll)
-  - [x] `crux_get_selection` — stub (requires GPUI selection API)
+  - [x] `crux_get_selection` — read selection via PANE_GET_SELECTION IPC
   - [x] `crux_get_scrollback` — scrollback buffer with offset/limit pagination
+  - **Note**: `crux_get_current_directory` and `crux_get_running_process` listed in original design are subsumed by `crux_get_pane_state` which returns cwd, pid, and process info in a single call.
 - [x] Content capture tools (5):
-  - [x] `crux_screenshot_pane` — stub (requires GPUI rendering pipeline)
+  - [x] `crux_screenshot_pane` — JSON snapshot via PANE_GET_SNAPSHOT IPC
   - [x] `crux_get_raw_text` — ANSI-stripped plain text
   - [x] `crux_get_formatted_output` — ANSI codes preserved
   - [x] `crux_get_scrollback_text` — scrollback text with line range
-  - [x] `crux_save_restore_session` — stub (requires session serialization)
+  - [x] `crux_save_restore_session` — split into `crux_save_session` + `crux_load_session` via IPC
 - [x] MCP resources: expose pane scrollback as `crux://pane/{id}/scrollback`
   - Resource templates: scrollback (text/plain) + state (application/json)
   - list_resource_templates + read_resource handlers in ServerHandler impl
@@ -465,7 +470,7 @@ Based on failure analysis of Alacritty, Ghostty, WezTerm:
 
 ### 4.1 Link Detection
 
-- [ ] URL regex pattern matching on terminal output
+- [x] URL regex pattern matching on terminal output (implemented in `crux-terminal-view/src/url_detector.rs`)
 - [ ] OSC 8 hyperlink protocol support (`\e]8;;URL\e\\text\e]8;;\e\\`)
 - [ ] Cmd+click to open links in default browser
 - [ ] Visual hover indicator (underline + color change)
@@ -481,10 +486,12 @@ Based on failure analysis of Alacritty, Ghostty, WezTerm:
 
 ### 4.3 Kitty Graphics Protocol (Priority 1)
 
-- [ ] APC sequence parsing (`\e_G...;\e\\`)
+> **Note**: `crux-graphics` crate (1,490 LOC) implements Kitty protocol parsing, ImageManager with LRU eviction (320 MiB quota), and placement tracking. Scanner and parser are production-ready; rendering integration pending.
+
+- [x] APC sequence parsing (`\e_G...;\e\\`) — stateful scanner in `crux-terminal/src/graphics_scanner.rs` (745 LOC)
 - [ ] Image transmission: direct (base64), file path, temp file, shared memory
 - [ ] Image formats: PNG, RGBA, RGB
-- [ ] Chunked transfer (multi-part `m=1` / `m=0`)
+- [x] Chunked transfer (multi-part `m=1` / `m=0`) — stateful accumulator with 64MB limit
 - [ ] Image placement: cursor position, z-index
 - [ ] Image display within terminal grid
 - [ ] Image deletion commands
@@ -492,7 +499,7 @@ Based on failure analysis of Alacritty, Ghostty, WezTerm:
 
 ### 4.4 iTerm2 Image Protocol (Priority 2)
 
-- [ ] OSC 1337 inline image display
+- [x] OSC 1337 inline image display — scanner in `crux-terminal/src/graphics_scanner.rs`
 - [ ] `imgcat` compatibility
 - [ ] Supported formats: PNG, JPEG, GIF, PDF
 - [ ] Width/height specification (cells, pixels, percent, auto)
@@ -518,7 +525,9 @@ Based on failure analysis of Alacritty, Ghostty, WezTerm:
 
 ### 4.7 Kitty Keyboard Protocol (Progressive Enhancement)
 
-- [ ] `CSI > flags u` push / `CSI < u` pop / `CSI ? u` query
+> **Note**: Full encoder implemented in `crux-terminal-view/src/kitty_encode.rs` (1,018 LOC) with flags 1/2/4 support. Not yet wired into input pipeline — awaiting application negotiation via `CSI > flags u`.
+
+- [ ] `CSI > flags u` push / `CSI < u` pop / `CSI ? u` query (encoder ready, negotiation pending)
 - [ ] Flag 1 (Disambiguate): resolve Tab/Ctrl+I, Enter/Ctrl+M, Escape/Ctrl+[ ambiguity
 - [ ] Flag 2 (Report events): repeat/release event reporting
 - [ ] Flag 4 (Report alternates): shifted and base-layout variants
@@ -727,9 +736,9 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 ### 5.7 Configuration System
 
 #### Config File & Parsing
-- [ ] TOML configuration file (`~/.config/crux/config.toml`)
-- [ ] XDG-first config discovery with macOS native fallback (`~/Library/Application Support/com.crux.terminal/`)
-- [ ] `deny_unknown_fields` — typo detection at parse time
+- [x] TOML configuration file (`~/.config/crux/config.toml`) — implemented in `crux-config` crate (581 LOC)
+- [x] XDG-first config discovery with macOS native fallback (`~/Library/Application Support/crux/`)
+- [x] `deny_unknown_fields` — typo detection at parse time
 - [ ] Layered config merging: CLI flags > env vars (`CRUX_*`) > config file > built-in defaults
 - [ ] `crux --generate-config` — emit annotated default config
 - [ ] `crux --check-config` — validate config without launching
@@ -757,8 +766,8 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 - [ ] Autosuggestion toggle (fish-style history-based, Phase 2 dependency)
 
 #### Hot Reload
-- [ ] File system watcher via `notify` crate (watch parent directory for atomic saves)
-- [ ] 10ms debounce to prevent rapid successive reloads
+- [x] File system watcher via `notify` crate (watch parent directory for atomic saves) — `crux-config/src/watcher.rs`
+- [x] 500ms debounce to prevent rapid successive reloads (revised from 10ms)
 - [ ] On parse error: keep old config, show user-facing notification
 - [ ] Diff-based application — only re-render changed properties
 
@@ -781,7 +790,8 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
 
 ### 5.9 Polish
 
-- [ ] Application icon and window chrome
+- [x] Application icon (`extra/crux-icon.svg`, `extra/crux-logo.svg`)
+- [ ] Window chrome polish
 - [ ] macOS menu bar integration
 - [ ] About dialog with version info
 
@@ -818,11 +828,11 @@ Advanced MCP tools leveraging Crux's unique capabilities (GPUI, IME, clipboard, 
   - `Crux.app/Contents/Resources/crux.icns` (icon)
   - `Crux.app/Contents/Resources/terminfo/` (compiled terminfo)
   - `Crux.app/Contents/Info.plist`
-- [ ] GitHub Actions CI workflow:
+- [x] GitHub Actions CI workflow (`.github/workflows/ci.yml`):
   - Check & lint (clippy, rustfmt) on push/PR
-  - Build Universal Binary
+  - Build workspace
   - Run tests
-  - Cache: `Swatinem/rust-cache@v2` + sccache (up to 80% build time reduction)
+  - Cache: `Swatinem/rust-cache@v2`
 - [ ] GitHub Actions Release workflow (triggered by `v*` tags):
   - Build Universal Binary
   - Create `.app` bundle
