@@ -9,35 +9,25 @@ use std::path::PathBuf;
 /// 2. `$XDG_RUNTIME_DIR/crux/gui-sock-$PID`
 /// 3. `/tmp/crux-$UID/gui-sock-$PID`
 pub fn socket_path() -> PathBuf {
-    if let Ok(path) = std::env::var("CRUX_SOCKET") {
-        return PathBuf::from(path);
-    }
+    let env = SocketEnv::from_env();
+    let path = resolve_socket_path(&env);
 
-    let dir = runtime_directory();
-
-    // Ensure the directory exists with restricted permissions.
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        log::warn!("failed to create socket directory {}: {}", dir.display(), e);
-    } else {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    // Ensure the parent directory exists with restricted permissions.
+    if env.crux_socket.is_none() {
+        let dir = resolve_runtime_dir(env.xdg_runtime_dir.as_deref());
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::warn!("failed to create socket directory {}: {}", dir.display(), e);
+        } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ =
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            }
         }
     }
 
-    let pid = std::process::id();
-    dir.join(format!("gui-sock-{pid}"))
-}
-
-/// Get the runtime directory for socket files.
-fn runtime_directory() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(xdg).join("crux");
-    }
-
-    let uid = unsafe { libc::getuid() };
-    PathBuf::from(format!("/tmp/crux-{uid}"))
+    path
 }
 
 /// Discover an existing Crux server socket.
@@ -46,8 +36,53 @@ fn runtime_directory() -> PathBuf {
 /// 1. Check `$CRUX_SOCKET`
 /// 2. Scan runtime directory for the most recent `gui-sock-*` file
 pub fn discover_socket() -> Option<PathBuf> {
-    // 1. Explicit environment variable
-    if let Ok(path) = std::env::var("CRUX_SOCKET") {
+    let env = SocketEnv::from_env();
+    discover_socket_with(&env)
+}
+
+/// Resolved environment for socket path determination.
+///
+/// Captures environment variables once, enabling pure-function testing
+/// without global state manipulation.
+struct SocketEnv {
+    crux_socket: Option<String>,
+    xdg_runtime_dir: Option<String>,
+}
+
+impl SocketEnv {
+    fn from_env() -> Self {
+        Self {
+            crux_socket: std::env::var("CRUX_SOCKET").ok(),
+            xdg_runtime_dir: std::env::var("XDG_RUNTIME_DIR").ok(),
+        }
+    }
+}
+
+/// Pure socket path resolution — no filesystem side effects.
+fn resolve_socket_path(env: &SocketEnv) -> PathBuf {
+    if let Some(ref path) = env.crux_socket {
+        return PathBuf::from(path);
+    }
+
+    let dir = resolve_runtime_dir(env.xdg_runtime_dir.as_deref());
+    let pid = std::process::id();
+    dir.join(format!("gui-sock-{pid}"))
+}
+
+/// Pure runtime directory resolution.
+fn resolve_runtime_dir(xdg_runtime_dir: Option<&str>) -> PathBuf {
+    if let Some(xdg) = xdg_runtime_dir {
+        return PathBuf::from(xdg).join("crux");
+    }
+
+    let uid = unsafe { libc::getuid() };
+    PathBuf::from(format!("/tmp/crux-{uid}"))
+}
+
+/// Pure socket discovery — operates on resolved env and scans given directory.
+fn discover_socket_with(env: &SocketEnv) -> Option<PathBuf> {
+    // 1. Explicit override
+    if let Some(ref path) = env.crux_socket {
         let p = PathBuf::from(path);
         if p.exists() {
             return Some(p);
@@ -55,8 +90,13 @@ pub fn discover_socket() -> Option<PathBuf> {
     }
 
     // 2. Scan runtime directory for most recent socket
-    let dir = runtime_directory();
-    let read_dir = std::fs::read_dir(&dir).ok()?;
+    let dir = resolve_runtime_dir(env.xdg_runtime_dir.as_deref());
+    scan_socket_dir(&dir)
+}
+
+/// Scan a directory for the most recently modified `gui-sock-*` file.
+fn scan_socket_dir(dir: &std::path::Path) -> Option<PathBuf> {
+    let read_dir = std::fs::read_dir(dir).ok()?;
 
     let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
 
@@ -83,31 +123,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn socket_path_contains_pid() {
-        // Clear env to test default path
-        std::env::remove_var("CRUX_SOCKET");
-        let path = socket_path();
+    fn resolve_default_path_contains_pid() {
+        let env = SocketEnv {
+            crux_socket: None,
+            xdg_runtime_dir: None,
+        };
+        let path = resolve_socket_path(&env);
         let pid = std::process::id();
         let filename = path.file_name().unwrap().to_string_lossy();
         assert_eq!(filename, format!("gui-sock-{pid}"));
     }
 
     #[test]
-    fn socket_path_respects_env_override() {
-        let test_path = "/tmp/crux-test-socket";
-        std::env::set_var("CRUX_SOCKET", test_path);
-        let path = socket_path();
-        assert_eq!(path, PathBuf::from(test_path));
-        std::env::remove_var("CRUX_SOCKET");
+    fn resolve_crux_socket_override() {
+        let env = SocketEnv {
+            crux_socket: Some("/tmp/crux-test-socket".into()),
+            xdg_runtime_dir: None,
+        };
+        let path = resolve_socket_path(&env);
+        assert_eq!(path, PathBuf::from("/tmp/crux-test-socket"));
     }
 
     #[test]
-    fn discover_socket_returns_none_when_empty() {
-        std::env::remove_var("CRUX_SOCKET");
-        // With a non-existent directory, discover should return None
-        std::env::set_var("XDG_RUNTIME_DIR", "/tmp/crux-test-nonexistent-dir");
-        let result = discover_socket();
+    fn resolve_xdg_runtime_dir() {
+        let env = SocketEnv {
+            crux_socket: None,
+            xdg_runtime_dir: Some("/run/user/1000".into()),
+        };
+        let path = resolve_socket_path(&env);
+        let pid = std::process::id();
+        assert_eq!(path, PathBuf::from(format!("/run/user/1000/crux/gui-sock-{pid}")));
+    }
+
+    #[test]
+    fn resolve_crux_socket_takes_priority_over_xdg() {
+        let env = SocketEnv {
+            crux_socket: Some("/custom/socket".into()),
+            xdg_runtime_dir: Some("/run/user/1000".into()),
+        };
+        let path = resolve_socket_path(&env);
+        assert_eq!(path, PathBuf::from("/custom/socket"));
+    }
+
+    #[test]
+    fn discover_returns_none_for_nonexistent_dir() {
+        let env = SocketEnv {
+            crux_socket: None,
+            xdg_runtime_dir: Some("/tmp/crux-test-nonexistent-dir-12345".into()),
+        };
+        let result = discover_socket_with(&env);
         assert!(result.is_none());
-        std::env::remove_var("XDG_RUNTIME_DIR");
+    }
+
+    #[test]
+    fn runtime_dir_falls_back_to_tmp() {
+        let dir = resolve_runtime_dir(None);
+        let uid = unsafe { libc::getuid() };
+        assert_eq!(dir, PathBuf::from(format!("/tmp/crux-{uid}")));
+    }
+
+    #[test]
+    fn runtime_dir_uses_xdg_when_set() {
+        let dir = resolve_runtime_dir(Some("/run/user/501"));
+        assert_eq!(dir, PathBuf::from("/run/user/501/crux"));
     }
 }
