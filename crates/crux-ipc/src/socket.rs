@@ -21,7 +21,9 @@ pub fn socket_path() -> PathBuf {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                if let Err(e) = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)) {
+                if let Err(e) =
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                {
                     log::warn!("failed to set socket dir permissions: {e}");
                 }
             }

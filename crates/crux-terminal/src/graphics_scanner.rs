@@ -703,8 +703,14 @@ mod tests {
         }
 
         // Scanner should have reset due to overflow
-        assert!(!scanner.is_accumulating(), "scanner should reset after overflow");
-        assert!(rx.try_recv().is_err(), "no event should be emitted for oversized payload");
+        assert!(
+            !scanner.is_accumulating(),
+            "scanner should reset after overflow"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "no event should be emitted for oversized payload"
+        );
     }
 
     #[test]
@@ -722,7 +728,10 @@ mod tests {
 
         // The scanner should have discarded the first sequence and ignored the non-graphics APC
         assert!(!scanner.is_accumulating());
-        assert!(rx.try_recv().is_err(), "malformed nested APC should not emit event");
+        assert!(
+            rx.try_recv().is_err(),
+            "malformed nested APC should not emit event"
+        );
     }
 
     #[test]

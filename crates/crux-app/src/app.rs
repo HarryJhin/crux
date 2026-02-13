@@ -209,7 +209,9 @@ impl CruxApp {
         // on the process-wide environment variable.
         let mut merged_env = env.cloned().unwrap_or_default();
         if let Ok(socket_path) = std::env::var("CRUX_SOCKET") {
-            merged_env.entry("CRUX_SOCKET".to_string()).or_insert(socket_path);
+            merged_env
+                .entry("CRUX_SOCKET".to_string())
+                .or_insert(socket_path);
         }
 
         cx.new(|cx| {
