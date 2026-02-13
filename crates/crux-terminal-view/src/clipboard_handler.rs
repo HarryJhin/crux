@@ -71,3 +71,79 @@ impl CruxTerminalView {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_paste_text;
+
+    #[test]
+    fn test_sanitize_paste_text_normal_text() {
+        // Normal text should pass through unchanged
+        assert_eq!(sanitize_paste_text("Hello, World!"), "Hello, World!");
+        assert_eq!(sanitize_paste_text("abc123"), "abc123");
+        assert_eq!(sanitize_paste_text(""), "");
+    }
+
+    #[test]
+    fn test_sanitize_paste_text_strips_esc() {
+        // ESC characters (\x1b) should be stripped
+        assert_eq!(sanitize_paste_text("Hello\x1b[31mWorld"), "Hello[31mWorld");
+        assert_eq!(sanitize_paste_text("\x1b[2J"), "[2J");
+        assert_eq!(sanitize_paste_text("\x1bOH"), "OH");
+    }
+
+    #[test]
+    fn test_sanitize_paste_text_strips_control_chars() {
+        // Control characters (except \n, \t, \r) should be stripped
+        assert_eq!(sanitize_paste_text("Hello\x00World"), "HelloWorld");
+        assert_eq!(sanitize_paste_text("Test\x01\x02\x03"), "Test");
+        assert_eq!(sanitize_paste_text("\x07Bell"), "Bell"); // BEL
+    }
+
+    #[test]
+    fn test_sanitize_paste_text_preserves_whitespace() {
+        // Newline, tab, and carriage return should be preserved
+        assert_eq!(sanitize_paste_text("Line1\nLine2"), "Line1\nLine2");
+        assert_eq!(sanitize_paste_text("Col1\tCol2"), "Col1\tCol2");
+        assert_eq!(sanitize_paste_text("Text\r\n"), "Text\r\n");
+    }
+
+    #[test]
+    fn test_sanitize_paste_text_mixed_content() {
+        // Mixed content: normal + ESC sequences + control chars
+        let input = "Hello\x1b[31m\x00World\nNext\tLine";
+        let expected = "Hello[31mWorld\nNext\tLine";
+        assert_eq!(sanitize_paste_text(input), expected);
+    }
+
+    #[test]
+    fn test_sanitize_paste_text_unicode() {
+        // Unicode text should be preserved
+        assert_eq!(sanitize_paste_text("안녕하세요"), "안녕하세요");
+        assert_eq!(sanitize_paste_text("Hello 世界 🌍"), "Hello 世界 🌍");
+    }
+
+    #[test]
+    fn test_sanitize_paste_text_only_control_chars() {
+        // Text with only control characters should result in empty string
+        assert_eq!(sanitize_paste_text("\x00\x01\x02\x1b"), "");
+    }
+
+    #[test]
+    fn test_sanitize_paste_text_ansi_injection_attack() {
+        // Simulate ANSI injection attack: ESC sequences that could manipulate terminal
+        let malicious = "echo 'harmless'\x1b[2K\x1b[1A\x1brm -rf /";
+        let sanitized = sanitize_paste_text(malicious);
+        // ESC should be stripped, preventing the attack
+        assert!(!sanitized.contains('\x1b'));
+        assert_eq!(sanitized, "echo 'harmless'[2K[1Arm -rf /");
+    }
+
+    #[test]
+    fn test_sanitize_paste_text_c1_control_codes() {
+        // C1 control codes (0x80-0x9F) should also be stripped
+        let text_with_c1 = "Hello\u{0080}\u{009F}World";
+        let sanitized = sanitize_paste_text(text_with_c1);
+        assert_eq!(sanitized, "HelloWorld");
+    }
+}

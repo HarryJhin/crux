@@ -167,3 +167,198 @@ impl CruxTerminalView {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::input::OptionAsAlt;
+    use crate::view::CruxTerminalView;
+    use gpui::{Keystroke, Modifiers};
+
+    #[test]
+    fn test_is_standalone_modifier() {
+        // Test known modifier keys
+        assert!(CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "shift".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+        assert!(CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "control".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+        assert!(CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "alt".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+        assert!(CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "cmd".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+        assert!(CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "option".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+        assert!(CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "command".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+
+        // Test non-modifier keys
+        assert!(!CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "a".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+        assert!(!CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "enter".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+        assert!(!CruxTerminalView::is_standalone_modifier(&Keystroke {
+            key: "tab".into(),
+            modifiers: Modifiers::default(),
+            key_char: None,
+        }));
+    }
+
+    #[test]
+    fn test_is_ime_candidate_character_keys() {
+        // Plain character keys should be IME candidates
+        assert!(CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "a".into(),
+                modifiers: Modifiers::default(),
+                key_char: None,
+            },
+            OptionAsAlt::None
+        ));
+        assert!(CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "ㄱ".into(),
+                modifiers: Modifiers::default(),
+                key_char: None,
+            },
+            OptionAsAlt::None
+        ));
+    }
+
+    #[test]
+    fn test_is_ime_candidate_with_modifiers() {
+        // Keys with Cmd/Ctrl/Fn should not be IME candidates
+        assert!(!CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "a".into(),
+                modifiers: Modifiers {
+                    platform: true,
+                    ..Default::default()
+                },
+                key_char: None,
+            },
+            OptionAsAlt::None
+        ));
+        assert!(!CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "a".into(),
+                modifiers: Modifiers {
+                    control: true,
+                    ..Default::default()
+                },
+                key_char: None,
+            },
+            OptionAsAlt::None
+        ));
+        assert!(!CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "a".into(),
+                modifiers: Modifiers {
+                    function: true,
+                    ..Default::default()
+                },
+                key_char: None,
+            },
+            OptionAsAlt::None
+        ));
+    }
+
+    #[test]
+    fn test_is_ime_candidate_alt_key_behavior() {
+        // Alt+key with OptionAsAlt::None should be IME candidate (macOS special chars)
+        assert!(CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "a".into(),
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Default::default()
+                },
+                key_char: None,
+            },
+            OptionAsAlt::None
+        ));
+
+        // Alt+key with OptionAsAlt::Both/Left/Right should not be IME candidate
+        assert!(!CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "a".into(),
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Default::default()
+                },
+                key_char: None,
+            },
+            OptionAsAlt::Both
+        ));
+        assert!(!CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "a".into(),
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Default::default()
+                },
+                key_char: None,
+            },
+            OptionAsAlt::Left
+        ));
+        assert!(!CruxTerminalView::is_ime_candidate(
+            &Keystroke {
+                key: "a".into(),
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Default::default()
+                },
+                key_char: None,
+            },
+            OptionAsAlt::Right
+        ));
+    }
+
+    #[test]
+    fn test_is_ime_candidate_control_keys() {
+        // Named terminal control keys should not be IME candidates
+        let control_keys = [
+            "enter", "tab", "backspace", "escape", "space", "up", "down", "left", "right",
+            "home", "end", "insert", "delete", "pageup", "pagedown", "f1", "f2", "f3", "f4",
+            "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+        ];
+
+        for key in control_keys {
+            assert!(
+                !CruxTerminalView::is_ime_candidate(
+                    &Keystroke {
+                        key: key.into(),
+                        modifiers: Modifiers::default(),
+                        key_char: None,
+                    },
+                    OptionAsAlt::None
+                ),
+                "Control key '{}' should not be IME candidate",
+                key
+            );
+        }
+    }
+
+}

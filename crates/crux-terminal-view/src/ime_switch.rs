@@ -200,3 +200,52 @@ pub fn switch_to_input_source(source_id: &str) -> bool {
         success
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_current_input_source_returns_value() {
+        // Integration test: should return a non-empty string on macOS
+        let result = current_input_source();
+        // On macOS with a keyboard layout configured, this should return Some(...)
+        // We can't assert the exact value since it depends on user config,
+        // but we can verify it's a valid call that doesn't panic
+        if let Some(source) = result {
+            assert!(!source.is_empty(), "Input source ID should not be empty");
+            // Common prefixes for macOS input sources
+            assert!(
+                source.starts_with("com.apple.") || source.contains("inputmethod"),
+                "Unexpected input source format: {}",
+                source
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_switch_to_ascii_does_not_panic() {
+        // Integration test: should not panic when called
+        // We can't verify the actual switch happened without user interaction,
+        // but we can ensure the function completes without crashing
+        switch_to_ascii();
+    }
+
+    #[test]
+    fn test_switch_to_input_source_with_null_byte() {
+        // CString::new rejects embedded NULs, so this should return false
+        // without ever calling into Carbon APIs.
+        let result = switch_to_input_source("com.apple\0.test");
+        assert!(!result, "Should return false for input source ID with null byte");
+    }
+
+    #[test]
+    fn test_function_signatures() {
+        // Compile-time test: verify function signatures are correct
+        let _f1: fn() -> Option<String> = current_input_source;
+        let _f2: fn() = switch_to_ascii;
+        let _f3: fn(&str) -> bool = switch_to_input_source;
+    }
+}

@@ -589,3 +589,103 @@ impl CruxApp {
         self.focused_tab_panel(window, cx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crux_protocol::*;
+
+    #[test]
+    fn test_protocol_types_have_correct_fields() {
+        let handshake = HandshakeParams {
+            client_name: "test".into(),
+            client_version: "1.0".into(),
+            protocol_version: "1.0".into(),
+            capabilities: vec![],
+        };
+        assert_eq!(handshake.client_name, "test");
+        assert_eq!(handshake.client_version, "1.0");
+
+        let split = SplitPaneParams {
+            direction: SplitDirection::Right,
+            target_pane_id: None,
+            size: None,
+            cwd: None,
+            command: None,
+            env: None,
+        };
+        assert!(matches!(split.direction, SplitDirection::Right));
+
+        let send_text = SendTextParams {
+            pane_id: None,
+            text: "hello".into(),
+            bracketed_paste: false,
+        };
+        assert_eq!(send_text.text, "hello");
+        assert!(!send_text.bracketed_paste);
+
+        let get_text = GetTextParams {
+            pane_id: None,
+            start_line: None,
+            end_line: None,
+            include_escapes: false,
+        };
+        assert!(get_text.pane_id.is_none());
+    }
+
+    #[test]
+    fn test_id_types() {
+        let pane_id = PaneId(42);
+        assert_eq!(pane_id.0, 42);
+
+        let window_id = WindowId(1);
+        assert_eq!(window_id.0, 1);
+
+        let tab_id = TabId(2);
+        assert_eq!(tab_id.0, 2);
+    }
+
+    #[test]
+    fn test_split_direction_variants() {
+        let _directions = [
+            SplitDirection::Right,
+            SplitDirection::Left,
+            SplitDirection::Top,
+            SplitDirection::Bottom,
+        ];
+    }
+
+    #[test]
+    fn test_pane_size_construction() {
+        let size = PaneSize { rows: 24, cols: 80 };
+        assert_eq!(size.rows, 24);
+        assert_eq!(size.cols, 80);
+    }
+
+    #[test]
+    fn test_clipboard_params() {
+        let read_params = ClipboardReadParams {
+            content_type: "text".into(),
+        };
+        assert_eq!(read_params.content_type, "text");
+
+        let write_params = ClipboardWriteParams {
+            content_type: "text".into(),
+            text: Some("hello".into()),
+            image_path: None,
+        };
+        assert_eq!(write_params.content_type, "text");
+        assert_eq!(write_params.text.as_deref(), Some("hello"));
+        assert!(write_params.image_path.is_none());
+    }
+
+    #[test]
+    fn test_ime_set_input_source_params() {
+        let params = ImeSetInputSourceParams {
+            input_source: "com.apple.inputmethod.Korean.2SetKorean".into(),
+        };
+        assert_eq!(
+            params.input_source,
+            "com.apple.inputmethod.Korean.2SetKorean"
+        );
+    }
+}
