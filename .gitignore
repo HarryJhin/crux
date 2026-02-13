@@ -29,5 +29,8 @@ DerivedData/
 # Claude Code
 .claude/settings.local.json
 
+# Proptest regressions
+**/proptest-regressions/
+
 # oh-my-claudecode
 .omc/
